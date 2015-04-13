@@ -306,7 +306,7 @@ for my $app (keys %apps) {
 #   };
 
 # ┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
-# ┃ Run dmenu to ask the user for her choice                                  ┃
+# ┃ Run dmenu to ask the user for their choice                                ┃
 # ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
 
 # open2 will just make dmenu’s STDERR go to our own STDERR.
@@ -410,7 +410,7 @@ $exec =~ s/%k/$location/g;
 $exec =~ s/%%/%/g;
 
 if (exists($app->{Path}) && $app->{Path} ne '') {
-    $exec = 'cd ' . $app->{Path} . ' && ' . $exec;
+    $exec = 'cd ' . quote($app->{Path}) . ' && ' . $exec;
 }
 
 my $nosn = '';

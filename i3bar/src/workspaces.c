@@ -4,7 +4,7 @@
  * i3bar - an xcb-based status- and ws-bar for i3
  * © 2010-2012 Axel Wagner and contributors (see also: LICENSE)
  *
- * workspaces.c: Maintaining the workspace-lists
+ * workspaces.c: Maintaining the workspace lists
  *
  */
 #include <string.h>
@@ -123,19 +123,19 @@ static int workspaces_string_cb(void *params_, const unsigned char *val, size_t 
 
             /* Offset may be equal to length, in which case display the number */
             params->workspaces_walk->name = (offset < len
-                                                 ? i3string_from_utf8_with_length(ws_name + offset, len - offset)
-                                                 : i3string_from_utf8(ws_num));
+                                                 ? i3string_from_markup_with_length(ws_name + offset, len - offset)
+                                                 : i3string_from_markup(ws_num));
 
         } else {
             /* Default case: just save the name */
-            params->workspaces_walk->name = i3string_from_utf8_with_length(ws_name, len);
+            params->workspaces_walk->name = i3string_from_markup_with_length(ws_name, len);
         }
 
         /* Save its rendered width */
         params->workspaces_walk->name_width =
             predict_text_width(params->workspaces_walk->name);
 
-        DLOG("Got Workspace canonical: %s, name: '%s', name_width: %d, glyphs: %zu\n",
+        DLOG("Got workspace canonical: %s, name: '%s', name_width: %d, glyphs: %zu\n",
              params->workspaces_walk->canonical_name,
              i3string_as_utf8(params->workspaces_walk->name),
              params->workspaces_walk->name_width,
@@ -167,7 +167,7 @@ static int workspaces_string_cb(void *params_, const unsigned char *val, size_t 
 }
 
 /*
- * We hit the start of a json-map (rect or a new output)
+ * We hit the start of a JSON map (rect or a new output)
  *
  */
 static int workspaces_start_map_cb(void *params_) {
@@ -195,7 +195,7 @@ static int workspaces_start_map_cb(void *params_) {
 /*
  * Parse a key.
  *
- * Essentially we just save it in the parsing-state
+ * Essentially we just save it in the parsing state
  *
  */
 static int workspaces_map_key_cb(void *params_, const unsigned char *keyVal, size_t keyLen) {
@@ -219,11 +219,11 @@ static yajl_callbacks workspaces_callbacks = {
 };
 
 /*
- * Start parsing the received json-string
+ * Start parsing the received JSON string
  *
  */
 void parse_workspaces_json(char *json) {
-    /* FIXME: Fasciliate stream-processing, i.e. allow starting to interpret
+    /* FIXME: Fasciliate stream processing, i.e. allow starting to interpret
      * JSON in chunks */
     struct workspaces_json_params params;
 
@@ -239,13 +239,13 @@ void parse_workspaces_json(char *json) {
 
     state = yajl_parse(handle, (const unsigned char *)json, strlen(json));
 
-    /* FIXME: Propper errorhandling for JSON-parsing */
+    /* FIXME: Propper error handling for JSON parsing */
     switch (state) {
         case yajl_status_ok:
             break;
         case yajl_status_client_canceled:
         case yajl_status_error:
-            ELOG("Could not parse workspaces-reply!\n");
+            ELOG("Could not parse workspaces reply!\n");
             exit(EXIT_FAILURE);
             break;
     }
@@ -256,7 +256,7 @@ void parse_workspaces_json(char *json) {
 }
 
 /*
- * free() all workspace data-structures. Does not free() the heads of the tailqueues.
+ * free() all workspace data structures. Does not free() the heads of the tailqueues.
  *
  */
 void free_workspaces(void) {
@@ -266,9 +266,9 @@ void free_workspaces(void) {
     }
     i3_ws *ws_walk;
 
-    SLIST_FOREACH (outputs_walk, outputs, slist) {
+    SLIST_FOREACH(outputs_walk, outputs, slist) {
         if (outputs_walk->workspaces != NULL && !TAILQ_EMPTY(outputs_walk->workspaces)) {
-            TAILQ_FOREACH (ws_walk, outputs_walk->workspaces, tailq) {
+            TAILQ_FOREACH(ws_walk, outputs_walk->workspaces, tailq) {
                 I3STRING_FREE(ws_walk->name);
                 FREE(ws_walk->canonical_name);
             }

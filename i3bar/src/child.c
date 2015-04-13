@@ -4,7 +4,7 @@
  * i3bar - an xcb-based status- and ws-bar for i3
  * © 2010-2012 Axel Wagner and contributors (see also: LICENSE)
  *
- * child.c: Getting Input for the statusline
+ * child.c: Getting input for the statusline
  *
  */
 #include <stdlib.h>
@@ -30,7 +30,7 @@
 /* Global variables for child_*() */
 i3bar_child child;
 
-/* stdin- and sigchild-watchers */
+/* stdin- and SIGCHLD-watchers */
 ev_io *stdin_io;
 ev_child *child_sig;
 
@@ -54,23 +54,40 @@ typedef struct parser_ctx {
 
 parser_ctx parser_context;
 
-/* The buffer statusline points to */
 struct statusline_head statusline_head = TAILQ_HEAD_INITIALIZER(statusline_head);
-char *statusline_buffer = NULL;
+/* Used temporarily while reading a statusline */
+struct statusline_head statusline_buffer = TAILQ_HEAD_INITIALIZER(statusline_buffer);
 
 int child_stdin;
 
 /*
- * Clears all blocks from the statusline structure in memory and frees their
- * associated resources.
+ * Remove all blocks from the given statusline.
+ * If free_resources is set, the fields of each status block will be free'd.
  */
-static void clear_status_blocks() {
+static void clear_statusline(struct statusline_head *head, bool free_resources) {
     struct status_block *first;
-    while (!TAILQ_EMPTY(&statusline_head)) {
-        first = TAILQ_FIRST(&statusline_head);
-        I3STRING_FREE(first->full_text);
-        TAILQ_REMOVE(&statusline_head, first, blocks);
+    while (!TAILQ_EMPTY(head)) {
+        first = TAILQ_FIRST(head);
+        if (free_resources) {
+            I3STRING_FREE(first->full_text);
+            I3STRING_FREE(first->short_text);
+            FREE(first->color);
+            FREE(first->name);
+            FREE(first->instance);
+            FREE(first->min_width_str);
+        }
+
+        TAILQ_REMOVE(head, first, blocks);
         free(first);
+    }
+}
+
+static void copy_statusline(struct statusline_head *from, struct statusline_head *to) {
+    struct status_block *current;
+    TAILQ_FOREACH(current, from, blocks) {
+        struct status_block *new_block = smalloc(sizeof(struct status_block));
+        memcpy(new_block, current, sizeof(struct status_block));
+        TAILQ_INSERT_TAIL(to, new_block, blocks);
     }
 }
 
@@ -81,12 +98,12 @@ static void clear_status_blocks() {
  * the space allocated for the statusline.
  */
 __attribute__((format(printf, 1, 2))) static void set_statusline_error(const char *format, ...) {
-    clear_status_blocks();
+    clear_statusline(&statusline_head, true);
 
     char *message;
     va_list args;
     va_start(args, format);
-    vasprintf(&message, format, args);
+    (void)vasprintf(&message, format, args);
 
     struct status_block *err_block = scalloc(sizeof(struct status_block));
     err_block->full_text = i3string_from_utf8("Error: ");
@@ -108,16 +125,13 @@ __attribute__((format(printf, 1, 2))) static void set_statusline_error(const cha
 }
 
 /*
- * Stop and free() the stdin- and sigchild-watchers
+ * Stop and free() the stdin- and SIGCHLD-watchers
  *
  */
 void cleanup(void) {
     if (stdin_io != NULL) {
         ev_io_stop(main_loop, stdin_io);
         FREE(stdin_io);
-        FREE(statusline_buffer);
-        /* statusline pointed to memory within statusline_buffer */
-        statusline = NULL;
     }
 
     if (child_sig != NULL) {
@@ -130,20 +144,12 @@ void cleanup(void) {
 
 /*
  * The start of a new array is the start of a new status line, so we clear all
- * previous entries.
- *
+ * previous entries from the buffer.
  */
 static int stdin_start_array(void *context) {
-    struct status_block *first;
-    while (!TAILQ_EMPTY(&statusline_head)) {
-        first = TAILQ_FIRST(&statusline_head);
-        I3STRING_FREE(first->full_text);
-        FREE(first->color);
-        FREE(first->name);
-        FREE(first->instance);
-        TAILQ_REMOVE(&statusline_head, first, blocks);
-        free(first);
-    }
+    // the blocks are still used by statusline_head, so we won't free the
+    // resources here.
+    clear_statusline(&statusline_buffer, false);
     return 1;
 }
 
@@ -156,7 +162,10 @@ static int stdin_start_map(void *context) {
     memset(&(ctx->block), '\0', sizeof(struct status_block));
 
     /* Default width of the separator block. */
-    ctx->block.sep_block_width = logical_px(9);
+    if (config.separator_symbol == NULL)
+        ctx->block.sep_block_width = logical_px(9);
+    else
+        ctx->block.sep_block_width = logical_px(8) + separator_symbol_width;
 
     return 1;
 }
@@ -172,46 +181,66 @@ static int stdin_boolean(void *context, int val) {
     parser_ctx *ctx = context;
     if (strcasecmp(ctx->last_map_key, "urgent") == 0) {
         ctx->block.urgent = val;
+        return 1;
     }
     if (strcasecmp(ctx->last_map_key, "separator") == 0) {
         ctx->block.no_separator = !val;
+        return 1;
     }
+
     return 1;
 }
 
 static int stdin_string(void *context, const unsigned char *val, size_t len) {
     parser_ctx *ctx = context;
     if (strcasecmp(ctx->last_map_key, "full_text") == 0) {
-        ctx->block.full_text = i3string_from_utf8_with_length((const char *)val, len);
+        ctx->block.full_text = i3string_from_markup_with_length((const char *)val, len);
+        return 1;
+    }
+    if (strcasecmp(ctx->last_map_key, "short_text") == 0) {
+        ctx->block.short_text = i3string_from_markup_with_length((const char *)val, len);
+        return 1;
     }
     if (strcasecmp(ctx->last_map_key, "color") == 0) {
         sasprintf(&(ctx->block.color), "%.*s", len, val);
+        return 1;
+    }
+    if (strcasecmp(ctx->last_map_key, "markup") == 0) {
+        ctx->block.is_markup = (len == strlen("pango") && !strncasecmp((const char *)val, "pango", strlen("pango")));
+        return 1;
     }
     if (strcasecmp(ctx->last_map_key, "align") == 0) {
-        if (len == strlen("left") && !strncmp((const char *)val, "left", strlen("left"))) {
-            ctx->block.align = ALIGN_LEFT;
+        if (len == strlen("center") && !strncmp((const char *)val, "center", strlen("center"))) {
+            ctx->block.align = ALIGN_CENTER;
         } else if (len == strlen("right") && !strncmp((const char *)val, "right", strlen("right"))) {
             ctx->block.align = ALIGN_RIGHT;
         } else {
-            ctx->block.align = ALIGN_CENTER;
+            ctx->block.align = ALIGN_LEFT;
         }
-    } else if (strcasecmp(ctx->last_map_key, "min_width") == 0) {
-        i3String *text = i3string_from_utf8_with_length((const char *)val, len);
-        ctx->block.min_width = (uint32_t)predict_text_width(text);
-        i3string_free(text);
+        return 1;
+    }
+    if (strcasecmp(ctx->last_map_key, "min_width") == 0) {
+        char *copy = (char *)malloc(len + 1);
+        strncpy(copy, (const char *)val, len);
+        copy[len] = 0;
+        ctx->block.min_width_str = copy;
+        return 1;
     }
     if (strcasecmp(ctx->last_map_key, "name") == 0) {
         char *copy = (char *)malloc(len + 1);
         strncpy(copy, (const char *)val, len);
         copy[len] = 0;
         ctx->block.name = copy;
+        return 1;
     }
     if (strcasecmp(ctx->last_map_key, "instance") == 0) {
         char *copy = (char *)malloc(len + 1);
         strncpy(copy, (const char *)val, len);
         copy[len] = 0;
         ctx->block.instance = copy;
+        return 1;
     }
+
     return 1;
 }
 
@@ -219,13 +248,20 @@ static int stdin_integer(void *context, long long val) {
     parser_ctx *ctx = context;
     if (strcasecmp(ctx->last_map_key, "min_width") == 0) {
         ctx->block.min_width = (uint32_t)val;
+        return 1;
     }
     if (strcasecmp(ctx->last_map_key, "separator_block_width") == 0) {
         ctx->block.sep_block_width = (uint32_t)val;
+        return 1;
     }
+
     return 1;
 }
 
+/*
+ * When a map is finished, we have an entire status block.
+ * Move it from the parser's context to the statusline buffer.
+ */
 static int stdin_end_map(void *context) {
     parser_ctx *ctx = context;
     struct status_block *new_block = smalloc(sizeof(struct status_block));
@@ -233,18 +269,40 @@ static int stdin_end_map(void *context) {
     /* Ensure we have a full_text set, so that when it is missing (or null),
      * i3bar doesn’t crash and the user gets an annoying message. */
     if (!new_block->full_text)
-        new_block->full_text = i3string_from_utf8("SPEC VIOLATION (null)");
+        new_block->full_text = i3string_from_utf8("SPEC VIOLATION: full_text is NULL!");
     if (new_block->urgent)
         ctx->has_urgent = true;
-    TAILQ_INSERT_TAIL(&statusline_head, new_block, blocks);
+
+    if (new_block->min_width_str) {
+        i3String *text = i3string_from_utf8(new_block->min_width_str);
+        i3string_set_markup(text, new_block->is_markup);
+        new_block->min_width = (uint32_t)predict_text_width(text);
+        i3string_free(text);
+    }
+
+    i3string_set_markup(new_block->full_text, new_block->is_markup);
+
+    if (new_block->short_text != NULL)
+        i3string_set_markup(new_block->short_text, new_block->is_markup);
+
+    TAILQ_INSERT_TAIL(&statusline_buffer, new_block, blocks);
     return 1;
 }
 
+/*
+ * When an array is finished, we have an entire statusline.
+ * Copy it from the buffer to the actual statusline.
+ */
 static int stdin_end_array(void *context) {
+    DLOG("copying statusline_buffer to statusline_head\n");
+    clear_statusline(&statusline_head, true);
+    copy_statusline(&statusline_buffer, &statusline_head);
+
     DLOG("dumping statusline:\n");
     struct status_block *current;
-    TAILQ_FOREACH (current, &statusline_head, blocks) {
+    TAILQ_FOREACH(current, &statusline_head, blocks) {
         DLOG("full_text = %s\n", i3string_as_utf8(current->full_text));
+        DLOG("short_text = %s\n", (current->short_text == NULL ? NULL : i3string_as_utf8(current->short_text)));
         DLOG("color = %s\n", current->color);
     }
     DLOG("end of dump\n");
@@ -304,7 +362,7 @@ static void read_flat_input(char *buffer, int length) {
         buffer[length - 1] = '\0';
     else
         buffer[length] = '\0';
-    first->full_text = i3string_from_utf8(buffer);
+    first->full_text = i3string_from_markup(buffer);
 }
 
 static bool read_json_input(unsigned char *input, int length) {
@@ -371,7 +429,7 @@ void stdin_io_first_line_cb(struct ev_loop *loop, ev_io *watcher, int revents) {
         if (config.hide_on_modifier) {
             stop_child();
         }
-        read_json_input(buffer + consumed, rec - consumed);
+        draw_bars(read_json_input(buffer + consumed, rec - consumed));
     } else {
         /* In case of plaintext, we just add a single block and change its
          * full_text pointer later. */
@@ -386,8 +444,8 @@ void stdin_io_first_line_cb(struct ev_loop *loop, ev_io *watcher, int revents) {
 }
 
 /*
- * We received a sigchild, meaning, that the child-process terminated.
- * We simply free the respective data-structures and don't care for input
+ * We received a SIGCHLD, meaning, that the child process terminated.
+ * We simply free the respective data structures and don't care for input
  * anymore
  *
  */
@@ -415,16 +473,27 @@ void child_write_output(void) {
     if (child.click_events) {
         const unsigned char *output;
         size_t size;
+        ssize_t n;
 
         yajl_gen_get_buf(gen, &output, &size);
-        write(child_stdin, output, size);
-        write(child_stdin, "\n", 1);
+
+        n = writeall(child_stdin, output, size);
+        if (n != -1)
+            n = writeall(child_stdin, "\n", 1);
+
         yajl_gen_clear(gen);
+
+        if (n == -1) {
+            child.click_events = false;
+            kill_child();
+            set_statusline_error("child_write_output failed");
+            draw_bars(false);
+        }
     }
 }
 
 /*
- * Start a child-process with the specified command and reroute stdin.
+ * Start a child process with the specified command and reroute stdin.
  * We actually start a $SHELL to execute the command so we don't have to care
  * about arguments and such.
  *
@@ -520,37 +589,39 @@ void child_click_events_key(const char *key) {
  *
  */
 void send_block_clicked(int button, const char *name, const char *instance, int x, int y) {
-    if (child.click_events) {
-        child_click_events_initialize();
-
-        yajl_gen_map_open(gen);
-
-        if (name) {
-            child_click_events_key("name");
-            yajl_gen_string(gen, (const unsigned char *)name, strlen(name));
-        }
-
-        if (instance) {
-            child_click_events_key("instance");
-            yajl_gen_string(gen, (const unsigned char *)instance, strlen(instance));
-        }
-
-        child_click_events_key("button");
-        yajl_gen_integer(gen, button);
-
-        child_click_events_key("x");
-        yajl_gen_integer(gen, x);
-
-        child_click_events_key("y");
-        yajl_gen_integer(gen, y);
-
-        yajl_gen_map_close(gen);
-        child_write_output();
+    if (!child.click_events) {
+        return;
     }
+
+    child_click_events_initialize();
+
+    yajl_gen_map_open(gen);
+
+    if (name) {
+        child_click_events_key("name");
+        yajl_gen_string(gen, (const unsigned char *)name, strlen(name));
+    }
+
+    if (instance) {
+        child_click_events_key("instance");
+        yajl_gen_string(gen, (const unsigned char *)instance, strlen(instance));
+    }
+
+    child_click_events_key("button");
+    yajl_gen_integer(gen, button);
+
+    child_click_events_key("x");
+    yajl_gen_integer(gen, x);
+
+    child_click_events_key("y");
+    yajl_gen_integer(gen, y);
+
+    yajl_gen_map_close(gen);
+    child_write_output();
 }
 
 /*
- * kill()s the child-process (if any). Called when exit()ing.
+ * kill()s the child process (if any). Called when exit()ing.
  *
  */
 void kill_child_at_exit(void) {
@@ -562,8 +633,8 @@ void kill_child_at_exit(void) {
 }
 
 /*
- * kill()s the child-process (if existent) and closes and
- * free()s the stdin- and sigchild-watchers
+ * kill()s the child process (if existent) and closes and
+ * free()s the stdin- and SIGCHLD-watchers
  *
  */
 void kill_child(void) {
@@ -578,7 +649,7 @@ void kill_child(void) {
 }
 
 /*
- * Sends a SIGSTOP to the child-process (if existent)
+ * Sends a SIGSTOP to the child process (if existent)
  *
  */
 void stop_child(void) {
@@ -589,7 +660,7 @@ void stop_child(void) {
 }
 
 /*
- * Sends a SIGCONT to the child-process (if existent)
+ * Sends a SIGCONT to the child process (if existent)
  *
  */
 void cont_child(void) {

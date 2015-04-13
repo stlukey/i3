@@ -76,7 +76,7 @@ bool tree_restore(const char *path, xcb_get_geometry_reply_t *geometry) {
 
     /* TODO: refactor the following */
     croot = con_new(NULL, NULL);
-    croot->rect = (Rect) {
+    croot->rect = (Rect){
         geometry->x,
         geometry->y,
         geometry->width,
@@ -104,6 +104,8 @@ bool tree_restore(const char *path, xcb_get_geometry_reply_t *geometry) {
         TAILQ_INSERT_HEAD(&(croot->nodes_head), __i3, nodes);
     }
 
+    restore_open_placeholder_windows(croot);
+
     return true;
 }
 
@@ -118,7 +120,7 @@ void tree_init(xcb_get_geometry_reply_t *geometry) {
     croot->name = "root";
     croot->type = CT_ROOT;
     croot->layout = L_SPLITH;
-    croot->rect = (Rect) {
+    croot->rect = (Rect){
         geometry->x,
         geometry->y,
         geometry->width,
@@ -167,9 +169,9 @@ Con *tree_open_con(Con *con, i3Window *window) {
 static bool _is_con_mapped(Con *con) {
     Con *child;
 
-    TAILQ_FOREACH (child, &(con->nodes_head), nodes)
-        if (_is_con_mapped(child))
-            return true;
+    TAILQ_FOREACH(child, &(con->nodes_head), nodes)
+    if (_is_con_mapped(child))
+        return true;
 
     return con->mapped;
 }
@@ -237,7 +239,7 @@ bool tree_close(Con *con, kill_window_t kill_window, bool dont_kill_parent, bool
              * unmap the window,
              * then reparent it to the root window. */
             xcb_change_window_attributes(conn, con->window->id,
-                                         XCB_CW_EVENT_MASK, (uint32_t[]) {XCB_NONE});
+                                         XCB_CW_EVENT_MASK, (uint32_t[]){XCB_NONE});
             xcb_unmap_window(conn, con->window->id);
             cookie = xcb_reparent_window(conn, con->window->id, root, 0, 0);
 
@@ -251,10 +253,18 @@ bool tree_close(Con *con, kill_window_t kill_window, bool dont_kill_parent, bool
             cookie = xcb_change_property(conn, XCB_PROP_MODE_REPLACE,
                                          con->window->id, A_WM_STATE, A_WM_STATE, 32, 2, data);
 
+            /* Remove the window from the save set. All windows in the save set
+             * will be mapped when i3 closes its connection (e.g. when
+             * restarting). This is not what we want, since some apps keep
+             * unmapped windows around and don’t expect them to suddenly be
+             * mapped. See http://bugs.i3wm.org/1617 */
+            xcb_change_save_set(conn, XCB_SET_MODE_DELETE, con->window->id);
+
             /* Ignore X11 errors for the ReparentWindow request.
              * X11 Errors are returned when the window was already destroyed */
             add_ignore_event(cookie.sequence, 0);
         }
+        ipc_send_window_event("close", con);
         FREE(con->window->class_class);
         FREE(con->window->class_instance);
         i3string_free(con->window->name);
@@ -406,8 +416,7 @@ void tree_split(Con *con, orientation_t orientation) {
     Con *parent = con->parent;
 
     /* Force re-rendering to make the indicator border visible. */
-    FREE(con->deco_render_params);
-    FREE(parent->deco_render_params);
+    con_force_split_parents_redraw(con);
 
     /* if we are in a container whose parent contains only one
      * child (its split functionality is unused so far), we just change the
@@ -489,13 +498,13 @@ static void mark_unmapped(Con *con) {
     Con *current;
 
     con->mapped = false;
-    TAILQ_FOREACH (current, &(con->nodes_head), nodes)
-        mark_unmapped(current);
+    TAILQ_FOREACH(current, &(con->nodes_head), nodes)
+    mark_unmapped(current);
     if (con->type == CT_WORKSPACE) {
         /* We need to call mark_unmapped on floating nodes aswell since we can
          * make containers floating. */
-        TAILQ_FOREACH (current, &(con->floating_head), floating_windows)
-            mark_unmapped(current);
+        TAILQ_FOREACH(current, &(con->floating_head), floating_windows)
+        mark_unmapped(current);
     }
 }
 
@@ -581,6 +590,13 @@ static bool _tree_next(Con *con, char way, orientation_t orientation, bool wrap)
             return true;
 
         Con *focus = con_descend_direction(workspace, direction);
+
+        /* special case: if there was no tiling con to focus and the workspace
+         * has a floating con in the focus stack, focus the top of the focus
+         * stack (which may be floating) */
+        if (focus == workspace)
+            focus = con_descend_focused(workspace);
+
         if (focus) {
             con_focus(focus);
             x_set_warp_to(&(focus->rect));
@@ -591,33 +607,38 @@ static bool _tree_next(Con *con, char way, orientation_t orientation, bool wrap)
     Con *parent = con->parent;
 
     if (con->type == CT_FLOATING_CON) {
-        /* left/right focuses the previous/next floating container */
-        if (orientation == HORIZ) {
-            Con *next;
-            if (way == 'n')
-                next = TAILQ_NEXT(con, floating_windows);
-            else
-                next = TAILQ_PREV(con, floating_head, floating_windows);
-
-            /* If there is no next/previous container, wrap */
-            if (!next) {
-                if (way == 'n')
-                    next = TAILQ_FIRST(&(parent->floating_head));
-                else
-                    next = TAILQ_LAST(&(parent->floating_head), floating_head);
-            }
-
-            /* Still no next/previous container? bail out */
-            if (!next)
-                return false;
-
-            con_focus(con_descend_focused(next));
-            return true;
-        } else {
-            /* up/down cycles through the Z-index */
-            /* TODO: implement cycling through the z-index */
+        if (orientation != HORIZ)
             return false;
+
+        /* left/right focuses the previous/next floating container */
+        Con *next;
+        if (way == 'n')
+            next = TAILQ_NEXT(con, floating_windows);
+        else
+            next = TAILQ_PREV(con, floating_head, floating_windows);
+
+        /* If there is no next/previous container, wrap */
+        if (!next) {
+            if (way == 'n')
+                next = TAILQ_FIRST(&(parent->floating_head));
+            else
+                next = TAILQ_LAST(&(parent->floating_head), floating_head);
         }
+
+        /* Still no next/previous container? bail out */
+        if (!next)
+            return false;
+
+        /* Raise the floating window on top of other windows preserving
+         * relative stack order */
+        while (TAILQ_LAST(&(parent->floating_head), floating_head) != next) {
+            Con *last = TAILQ_LAST(&(parent->floating_head), floating_head);
+            TAILQ_REMOVE(&(parent->floating_head), last, floating_windows);
+            TAILQ_INSERT_HEAD(&(parent->floating_head), last, floating_windows);
+        }
+
+        con_focus(con_descend_focused(next));
+        return true;
     }
 
     /* If the orientation does not match or there is no other con to focus, we

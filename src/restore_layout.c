@@ -125,9 +125,9 @@ void restore_connect(void) {
 
 static void update_placeholder_contents(placeholder_state *state) {
     xcb_change_gc(restore_conn, state->gc, XCB_GC_FOREGROUND,
-                  (uint32_t[]) {config.client.placeholder.background});
+                  (uint32_t[]){config.client.placeholder.background});
     xcb_poly_fill_rectangle(restore_conn, state->pixmap, state->gc, 1,
-                            (xcb_rectangle_t[]) {{0, 0, state->rect.width, state->rect.height}});
+                            (xcb_rectangle_t[]){{0, 0, state->rect.width, state->rect.height}});
 
     // TODO: make i3font functions per-connection, at least these two for now…?
     xcb_flush(restore_conn);
@@ -137,7 +137,7 @@ static void update_placeholder_contents(placeholder_state *state) {
 
     Match *swallows;
     int n = 0;
-    TAILQ_FOREACH (swallows, &(state->con->swallow_head), matches) {
+    TAILQ_FOREACH(swallows, &(state->con->swallow_head), matches) {
         char *serialized = NULL;
 
 #define APPEND_REGEX(re_name)                                                                                                                        \
@@ -180,7 +180,9 @@ static void update_placeholder_contents(placeholder_state *state) {
 
 static void open_placeholder_window(Con *con) {
     if (con_is_leaf(con) &&
-        (con->window == NULL || con->window->id == XCB_NONE)) {
+        (con->window == NULL || con->window->id == XCB_NONE) &&
+        !TAILQ_EMPTY(&(con->swallow_head)) &&
+        con->type == CT_CON) {
         xcb_window_t placeholder = create_window(
             restore_conn,
             con->rect,
@@ -190,15 +192,21 @@ static void open_placeholder_window(Con *con) {
             XCURSOR_CURSOR_POINTER,
             true,
             XCB_CW_BACK_PIXEL | XCB_CW_EVENT_MASK,
-            (uint32_t[]) {
+            (uint32_t[]){
                 config.client.placeholder.background,
                 XCB_EVENT_MASK_EXPOSURE | XCB_EVENT_MASK_STRUCTURE_NOTIFY,
             });
+        /* Make i3 not focus this window. */
+        xcb_icccm_wm_hints_t hints;
+        xcb_icccm_wm_hints_set_none(&hints);
+        xcb_icccm_wm_hints_set_input(&hints, 0);
+        xcb_icccm_set_wm_hints(restore_conn, placeholder, &hints);
         /* Set the same name as was stored in the layout file. While perhaps
          * slightly confusing in the first instant, this brings additional
          * clarity to which placeholder is waiting for which actual window. */
-        xcb_change_property(restore_conn, XCB_PROP_MODE_REPLACE, placeholder,
-                            A__NET_WM_NAME, A_UTF8_STRING, 8, strlen(con->name), con->name);
+        if (con->name != NULL)
+            xcb_change_property(restore_conn, XCB_PROP_MODE_REPLACE, placeholder,
+                                A__NET_WM_NAME, A_UTF8_STRING, 8, strlen(con->name), con->name);
         DLOG("Created placeholder window 0x%08x for leaf container %p / %s\n",
              placeholder, con, con->name);
 
@@ -210,7 +218,7 @@ static void open_placeholder_window(Con *con) {
         xcb_create_pixmap(restore_conn, root_depth, state->pixmap,
                           state->window, state->rect.width, state->rect.height);
         state->gc = xcb_generate_id(restore_conn);
-        xcb_create_gc(restore_conn, state->gc, state->pixmap, XCB_GC_GRAPHICS_EXPOSURES, (uint32_t[]) {0});
+        xcb_create_gc(restore_conn, state->gc, state->pixmap, XCB_GC_GRAPHICS_EXPOSURES, (uint32_t[]){0});
         update_placeholder_contents(state);
         TAILQ_INSERT_TAIL(&state_head, state, state);
 
@@ -218,14 +226,14 @@ static void open_placeholder_window(Con *con) {
         Match *temp_id = smalloc(sizeof(Match));
         match_init(temp_id);
         temp_id->id = placeholder;
-        TAILQ_INSERT_TAIL(&(con->swallow_head), temp_id, matches);
+        TAILQ_INSERT_HEAD(&(con->swallow_head), temp_id, matches);
     }
 
     Con *child;
-    TAILQ_FOREACH (child, &(con->nodes_head), nodes) {
+    TAILQ_FOREACH(child, &(con->nodes_head), nodes) {
         open_placeholder_window(child);
     }
-    TAILQ_FOREACH (child, &(con->floating_head), floating_windows) {
+    TAILQ_FOREACH(child, &(con->floating_head), floating_windows) {
         open_placeholder_window(child);
     }
 }
@@ -239,10 +247,10 @@ static void open_placeholder_window(Con *con) {
  */
 void restore_open_placeholder_windows(Con *parent) {
     Con *child;
-    TAILQ_FOREACH (child, &(parent->nodes_head), nodes) {
+    TAILQ_FOREACH(child, &(parent->nodes_head), nodes) {
         open_placeholder_window(child);
     }
-    TAILQ_FOREACH (child, &(parent->floating_head), floating_windows) {
+    TAILQ_FOREACH(child, &(parent->floating_head), floating_windows) {
         open_placeholder_window(child);
     }
 
@@ -258,7 +266,7 @@ void restore_open_placeholder_windows(Con *parent) {
  */
 bool restore_kill_placeholder(xcb_window_t placeholder) {
     placeholder_state *state;
-    TAILQ_FOREACH (state, &state_head, state) {
+    TAILQ_FOREACH(state, &state_head, state) {
         if (state->window != placeholder)
             continue;
 
@@ -277,7 +285,7 @@ bool restore_kill_placeholder(xcb_window_t placeholder) {
 
 static void expose_event(xcb_expose_event_t *event) {
     placeholder_state *state;
-    TAILQ_FOREACH (state, &state_head, state) {
+    TAILQ_FOREACH(state, &state_head, state) {
         if (state->window != event->window)
             continue;
 
@@ -305,7 +313,7 @@ static void expose_event(xcb_expose_event_t *event) {
  */
 static void configure_notify(xcb_configure_notify_event_t *event) {
     placeholder_state *state;
-    TAILQ_FOREACH (state, &state_head, state) {
+    TAILQ_FOREACH(state, &state_head, state) {
         if (state->window != event->window)
             continue;
 
@@ -322,7 +330,7 @@ static void configure_notify(xcb_configure_notify_event_t *event) {
         xcb_create_pixmap(restore_conn, root_depth, state->pixmap,
                           state->window, state->rect.width, state->rect.height);
         state->gc = xcb_generate_id(restore_conn);
-        xcb_create_gc(restore_conn, state->gc, state->pixmap, XCB_GC_GRAPHICS_EXPOSURES, (uint32_t[]) {0});
+        xcb_create_gc(restore_conn, state->gc, state->pixmap, XCB_GC_GRAPHICS_EXPOSURES, (uint32_t[]){0});
 
         update_placeholder_contents(state);
         xcb_copy_area(restore_conn, state->pixmap, state->window, state->gc,

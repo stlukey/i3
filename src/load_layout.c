@@ -24,6 +24,7 @@ static Con *json_node;
 static Con *to_focus;
 static bool parsing_swallows;
 static bool parsing_rect;
+static bool parsing_deco_rect;
 static bool parsing_window_rect;
 static bool parsing_geometry;
 static bool parsing_focus;
@@ -47,16 +48,18 @@ static int json_start_map(void *ctx) {
         match_init(current_swallow);
         TAILQ_INSERT_TAIL(&(json_node->swallow_head), current_swallow, matches);
     } else {
-        if (!parsing_rect && !parsing_window_rect && !parsing_geometry) {
+        if (!parsing_rect && !parsing_deco_rect && !parsing_window_rect && !parsing_geometry) {
             if (last_key && strcasecmp(last_key, "floating_nodes") == 0) {
                 DLOG("New floating_node\n");
                 Con *ws = con_get_workspace(json_node);
                 json_node = con_new_skeleton(NULL, NULL);
+                json_node->name = NULL;
                 json_node->parent = ws;
                 DLOG("Parent is workspace = %p\n", ws);
             } else {
                 Con *parent = json_node;
                 json_node = con_new_skeleton(NULL, NULL);
+                json_node->name = NULL;
                 json_node->parent = parent;
             }
         }
@@ -66,7 +69,7 @@ static int json_start_map(void *ctx) {
 
 static int json_end_map(void *ctx) {
     LOG("end of map\n");
-    if (!parsing_swallows && !parsing_rect && !parsing_window_rect && !parsing_geometry) {
+    if (!parsing_swallows && !parsing_rect && !parsing_deco_rect && !parsing_window_rect && !parsing_geometry) {
         /* Set a few default values to simplify manually crafted layout files. */
         if (json_node->layout == L_DEFAULT) {
             DLOG("Setting layout = L_SPLITH\n");
@@ -84,18 +87,46 @@ static int json_end_map(void *ctx) {
             }
         }
 
+        if (json_node->type == CT_WORKSPACE) {
+            /* Ensure the workspace has a name. */
+            DLOG("Attaching workspace. name = %s\n", json_node->name);
+            if (json_node->name == NULL || strcmp(json_node->name, "") == 0) {
+                json_node->name = sstrdup("unnamed");
+            }
+
+            /* Prevent name clashes when appending a workspace, e.g. when the
+             * user tries to restore a workspace called “1” but already has a
+             * workspace called “1”. */
+            Con *output;
+            Con *workspace = NULL;
+            TAILQ_FOREACH(output, &(croot->nodes_head), nodes)
+            GREP_FIRST(workspace, output_get_content(output), !strcasecmp(child->name, json_node->name));
+            char *base = sstrdup(json_node->name);
+            int cnt = 1;
+            while (workspace != NULL) {
+                FREE(json_node->name);
+                sasprintf(&(json_node->name), "%s_%d", base, cnt++);
+                workspace = NULL;
+                TAILQ_FOREACH(output, &(croot->nodes_head), nodes)
+                GREP_FIRST(workspace, output_get_content(output), !strcasecmp(child->name, json_node->name));
+            }
+            free(base);
+
+            /* Set num accordingly so that i3bar will properly sort it. */
+            json_node->num = ws_name_to_number(json_node->name);
+        }
+
         LOG("attaching\n");
         con_attach(json_node, json_node->parent, true);
         LOG("Creating window\n");
         x_con_init(json_node, json_node->depth);
         json_node = json_node->parent;
     }
-    if (parsing_rect)
-        parsing_rect = false;
-    if (parsing_window_rect)
-        parsing_window_rect = false;
-    if (parsing_geometry)
-        parsing_geometry = false;
+
+    parsing_rect = false;
+    parsing_deco_rect = false;
+    parsing_window_rect = false;
+    parsing_geometry = false;
     return 1;
 }
 
@@ -110,10 +141,10 @@ static int json_end_array(void *ctx) {
     if (parsing_focus) {
         /* Clear the list of focus mappings */
         struct focus_mapping *mapping;
-        TAILQ_FOREACH_REVERSE (mapping, &focus_mappings, focus_mappings_head, focus_mappings) {
+        TAILQ_FOREACH_REVERSE(mapping, &focus_mappings, focus_mappings_head, focus_mappings) {
             LOG("focus (reverse) %d\n", mapping->old_id);
             Con *con;
-            TAILQ_FOREACH (con, &(json_node->focus_head), focused) {
+            TAILQ_FOREACH(con, &(json_node->focus_head), focused) {
                 if (con->old_id != mapping->old_id)
                     continue;
                 LOG("got it! %p\n", con);
@@ -143,6 +174,9 @@ static int json_key(void *ctx, const unsigned char *val, size_t len) {
 
     if (strcasecmp(last_key, "rect") == 0)
         parsing_rect = true;
+
+    if (strcasecmp(last_key, "deco_rect") == 0)
+        parsing_deco_rect = true;
 
     if (strcasecmp(last_key, "window_rect") == 0)
         parsing_window_rect = true;
@@ -390,26 +424,110 @@ static int json_double(void *ctx, double val) {
     return 1;
 }
 
+static json_content_t content_result;
+static int content_level;
+
+static int json_determine_content_deeper(void *ctx) {
+    content_level++;
+    return 1;
+}
+
+static int json_determine_content_shallower(void *ctx) {
+    content_level--;
+    return 1;
+}
+
+static int json_determine_content_string(void *ctx, const unsigned char *val, size_t len) {
+    if (strcasecmp(last_key, "type") != 0 || content_level > 1)
+        return 1;
+
+    DLOG("string = %.*s, last_key = %s\n", (int)len, val, last_key);
+    if (strncasecmp((const char *)val, "workspace", len) == 0)
+        content_result = JSON_CONTENT_WORKSPACE;
+    return 0;
+}
+
+/* Parses the given JSON file until it encounters the first “type” property to
+ * determine whether the file contains workspaces or regular containers, which
+ * is important to know when deciding where (and how) to append the contents.
+ * */
+json_content_t json_determine_content(const char *filename) {
+    FILE *f;
+    if ((f = fopen(filename, "r")) == NULL) {
+        ELOG("Cannot open file \"%s\"\n", filename);
+        return JSON_CONTENT_UNKNOWN;
+    }
+    struct stat stbuf;
+    if (fstat(fileno(f), &stbuf) != 0) {
+        ELOG("Cannot fstat() \"%s\"\n", filename);
+        fclose(f);
+        return JSON_CONTENT_UNKNOWN;
+    }
+    char *buf = smalloc(stbuf.st_size);
+    int n = fread(buf, 1, stbuf.st_size, f);
+    if (n != stbuf.st_size) {
+        ELOG("File \"%s\" could not be read entirely, not loading.\n", filename);
+        fclose(f);
+        return JSON_CONTENT_UNKNOWN;
+    }
+    DLOG("read %d bytes\n", n);
+    // We default to JSON_CONTENT_CON because it is legal to not include
+    // “"type": "con"” in the JSON files for better readability.
+    content_result = JSON_CONTENT_CON;
+    content_level = 0;
+    yajl_gen g;
+    yajl_handle hand;
+    static yajl_callbacks callbacks = {
+        .yajl_string = json_determine_content_string,
+        .yajl_map_key = json_key,
+        .yajl_start_array = json_determine_content_deeper,
+        .yajl_start_map = json_determine_content_deeper,
+        .yajl_end_map = json_determine_content_shallower,
+        .yajl_end_array = json_determine_content_shallower,
+    };
+    g = yajl_gen_alloc(NULL);
+    hand = yajl_alloc(&callbacks, NULL, (void *)g);
+    /* Allowing comments allows for more user-friendly layout files. */
+    yajl_config(hand, yajl_allow_comments, true);
+    /* Allow multiple values, i.e. multiple nodes to attach */
+    yajl_config(hand, yajl_allow_multiple_values, true);
+    yajl_status stat;
+    setlocale(LC_NUMERIC, "C");
+    stat = yajl_parse(hand, (const unsigned char *)buf, n);
+    if (stat != yajl_status_ok && stat != yajl_status_client_canceled) {
+        unsigned char *str = yajl_get_error(hand, 1, (const unsigned char *)buf, n);
+        ELOG("JSON parsing error: %s\n", str);
+        yajl_free_error(hand, str);
+    }
+
+    setlocale(LC_NUMERIC, "");
+    yajl_complete_parse(hand);
+
+    fclose(f);
+
+    return content_result;
+}
+
 void tree_append_json(Con *con, const char *filename, char **errormsg) {
     FILE *f;
     if ((f = fopen(filename, "r")) == NULL) {
-        LOG("Cannot open file \"%s\"\n", filename);
+        ELOG("Cannot open file \"%s\"\n", filename);
         return;
     }
     struct stat stbuf;
     if (fstat(fileno(f), &stbuf) != 0) {
-        LOG("Cannot fstat() the file\n");
+        ELOG("Cannot fstat() \"%s\"\n", filename);
         fclose(f);
         return;
     }
     char *buf = smalloc(stbuf.st_size);
     int n = fread(buf, 1, stbuf.st_size, f);
     if (n != stbuf.st_size) {
-        LOG("File \"%s\" could not be read entirely, not loading.\n", filename);
+        ELOG("File \"%s\" could not be read entirely, not loading.\n", filename);
         fclose(f);
         return;
     }
-    LOG("read %d bytes\n", n);
+    DLOG("read %d bytes\n", n);
     yajl_gen g;
     yajl_handle hand;
     static yajl_callbacks callbacks = {
@@ -433,6 +551,7 @@ void tree_append_json(Con *con, const char *filename, char **errormsg) {
     to_focus = NULL;
     parsing_swallows = false;
     parsing_rect = false;
+    parsing_deco_rect = false;
     parsing_window_rect = false;
     parsing_geometry = false;
     parsing_focus = false;

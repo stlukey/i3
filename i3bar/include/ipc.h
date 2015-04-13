@@ -13,7 +13,7 @@
 
 /*
  * Initiate a connection to i3.
- * socket-path must be a valid path to the ipc_socket of i3
+ * socket_path must be a valid path to the ipc_socket of i3
  *
  */
 int init_connection(const char *socket_path);
@@ -25,11 +25,11 @@ int init_connection(const char *socket_path);
 void destroy_connection(void);
 
 /*
- * Sends a Message to i3.
+ * Sends a message to i3.
  * type must be a valid I3_IPC_MESSAGE_TYPE (see i3/ipc.h for further information)
  *
  */
-int i3_send_msg(uint32_t type, const char* payload);
+int i3_send_msg(uint32_t type, const char *payload);
 
 /*
  * Subscribe to all the i3-events, we need

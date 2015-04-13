@@ -22,6 +22,7 @@ is appropriate for the distribution.
 It tries to start one of the following (in that order):
 
 * $TERMINAL (this is a non-standard variable)
+* x-terminal-emulator (only present on Debian and derivatives)
 * urxvt
 * rxvt
 * terminator
@@ -32,8 +33,8 @@ It tries to start one of the following (in that order):
 * roxterm
 * xfce4-terminal
 
-Please don’t complain about the order: If the user has any preference, she will
-have $TERMINAL set or modified her i3 configuration file.
+Please don’t complain about the order: If the user has any preference, they will
+have $TERMINAL set or modified their i3 configuration file.
 
 == SEE ALSO
 
