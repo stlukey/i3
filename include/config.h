@@ -213,6 +213,9 @@ struct Config {
 
     /* The number of currently parsed barconfigs */
     int number_barconfigs;
+
+    /* useless gap size */
+    int gap_size;
 };
 
 /**

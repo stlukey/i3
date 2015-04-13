@@ -903,7 +903,7 @@ void cmd_append_layout(I3_CMD, char *path) {
     // is not executed yet and will be batched with append_layout’s
     // needs_tree_render after the parser finished. We should check if that is
     // necessary at all.
-    render_con(croot, false);
+    render_con(croot, false, false);
 
     restore_open_placeholder_windows(parent);
 
@@ -2057,4 +2057,15 @@ void cmd_debuglog(I3_CMD, char *argument) {
     }
     // XXX: default reply for now, make this a better reply
     ysuccess(true);
+}
+
+/**
+ * Implementation of 'gap_size <width>'
+ *
+ */
+
+void cmd_gap_size(I3_CMD, char *width) {
+    int px = atoi(width);
+
+    config.gap_size = px;
 }

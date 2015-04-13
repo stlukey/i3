@@ -287,3 +287,10 @@ void cmd_shmlog(I3_CMD, char *argument);
  *
  */
 void cmd_debuglog(I3_CMD, char *argument);
+
+/**
+ * Implementation of 'gap_size <width>'
+ *
+ */
+
+void cmd_gap_size(I3_CMD, char *width);
