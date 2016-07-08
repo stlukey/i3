@@ -778,14 +778,9 @@ static char *migrate_config(char *input, off_t size) {
 
     /* write the whole config file to the pipe, the script will read everything
      * immediately */
-    int written = 0;
-    int ret;
-    while (written < size) {
-        if ((ret = write(writepipe[1], input + written, size - written)) < 0) {
-            warn("Could not write to pipe");
-            return NULL;
-        }
-        written += ret;
+    if (writeall(writepipe[1], input, size) == -1) {
+        warn("Could not write to pipe");
+        return NULL;
     }
     close(writepipe[1]);
 
@@ -795,7 +790,7 @@ static char *migrate_config(char *input, off_t size) {
     /* read the script’s output */
     int conv_size = 65535;
     char *converted = malloc(conv_size);
-    int read_bytes = 0;
+    int read_bytes = 0, ret;
     do {
         if (read_bytes == conv_size) {
             conv_size += 65535;
@@ -823,11 +818,11 @@ static char *migrate_config(char *input, off_t size) {
         fprintf(stderr, "Migration process exit code was != 0\n");
         if (returncode == 2) {
             fprintf(stderr, "could not start the migration script\n");
-            /* TODO: script was not found. tell the user to fix his system or create a v4 config */
+            /* TODO: script was not found. tell the user to fix their system or create a v4 config */
         } else if (returncode == 1) {
             fprintf(stderr, "This already was a v4 config. Please add the following line to your config file:\n");
             fprintf(stderr, "# i3 config file (v4)\n");
-            /* TODO: nag the user with a message to include a hint for i3 in his config file */
+            /* TODO: nag the user with a message to include a hint for i3 in their config file */
         }
         return NULL;
     }
@@ -840,7 +835,7 @@ static char *migrate_config(char *input, off_t size) {
  * parse_config and possibly launching i3-nagbar.
  *
  */
-void parse_file(const char *f) {
+bool parse_file(const char *f, bool use_nagbar) {
     SLIST_HEAD(variables_head, Variable) variables = SLIST_HEAD_INITIALIZER(&variables);
     int fd, ret, read_bytes = 0;
     struct stat stbuf;
@@ -917,7 +912,7 @@ void parse_file(const char *f) {
      * variables (otherwise we will count them twice, which is bad when
      * 'extra' is negative) */
     char *bufcopy = sstrdup(buf);
-    SLIST_FOREACH (current, &variables, variables) {
+    SLIST_FOREACH(current, &variables, variables) {
         int extra = (strlen(current->value) - strlen(current->key));
         char *next;
         for (next = bufcopy;
@@ -937,11 +932,11 @@ void parse_file(const char *f) {
     destwalk = new;
     while (walk < (buf + stbuf.st_size)) {
         /* Find the next variable */
-        SLIST_FOREACH (current, &variables, variables)
-            current->next_match = strcasestr(walk, current->key);
+        SLIST_FOREACH(current, &variables, variables)
+        current->next_match = strcasestr(walk, current->key);
         nearest = NULL;
         int distance = stbuf.st_size;
-        SLIST_FOREACH (current, &variables, variables) {
+        SLIST_FOREACH(current, &variables, variables) {
             if (current->next_match == NULL)
                 continue;
             if ((current->next_match - walk) < distance) {
@@ -1000,7 +995,7 @@ void parse_file(const char *f) {
 
     check_for_duplicate_bindings(context);
 
-    if (context->has_errors || context->has_warnings) {
+    if (use_nagbar && (context->has_errors || context->has_warnings)) {
         ELOG("FYI: You are using i3 version " I3_VERSION "\n");
         if (version == 3)
             ELOG("Please convert your configfile first, then fix any remaining errors (see above).\n");
@@ -1030,6 +1025,8 @@ void parse_file(const char *f) {
         free(pageraction);
     }
 
+    bool has_errors = context->has_errors;
+
     FREE(context->line_copy);
     free(context);
     free(new);
@@ -1042,6 +1039,8 @@ void parse_file(const char *f) {
         SLIST_REMOVE_HEAD(&variables, variables);
         FREE(current);
     }
+
+    return !has_errors;
 }
 
 #endif

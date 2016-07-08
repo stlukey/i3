@@ -46,7 +46,7 @@ state INITIAL:
   exectype = 'exec_always', 'exec'         -> EXEC
   colorclass = 'client.background'
       -> COLOR_SINGLE
-  colorclass = 'client.focused_inactive', 'client.focused', 'client.unfocused', 'client.urgent'
+  colorclass = 'client.focused_inactive', 'client.focused', 'client.unfocused', 'client.urgent', 'client.placeholder'
       -> COLOR_BORDER
 
 # We ignore comments and 'set' lines (variables).
@@ -284,6 +284,8 @@ state FONT:
 state BINDING:
   release = '--release'
       ->
+  whole_window = '--whole-window'
+      ->
   modifiers = 'Mod1', 'Mod2', 'Mod3', 'Mod4', 'Mod5', 'Shift', 'Control', 'Ctrl', 'Mode_switch', '$mod'
       ->
   '+'
@@ -294,8 +296,10 @@ state BINDING:
 state BINDCOMMAND:
   release = '--release'
       ->
+  whole_window = '--whole-window'
+      ->
   command = string
-      -> call cfg_binding($bindtype, $modifiers, $key, $release, $command)
+      -> call cfg_binding($bindtype, $modifiers, $key, $release, $whole_window, $command)
 
 ################################################################################
 # Mode configuration
@@ -339,8 +343,10 @@ state MODE_BINDING:
 state MODE_BINDCOMMAND:
   release = '--release'
       ->
+  whole_window = '--whole-window'
+      ->
   command = string
-      -> call cfg_mode_binding($bindtype, $modifiers, $key, $release, $command); MODE
+      -> call cfg_mode_binding($bindtype, $modifiers, $key, $release, $whole_window, $command); MODE
 
 ################################################################################
 # Bar configuration (i3bar)
@@ -364,10 +370,13 @@ state BAR:
   'hidden_state'           -> BAR_HIDDEN_STATE
   'id'                     -> BAR_ID
   'modifier'               -> BAR_MODIFIER
+  'wheel_up_cmd'           -> BAR_WHEEL_UP_CMD
+  'wheel_down_cmd'         -> BAR_WHEEL_DOWN_CMD
   'position'               -> BAR_POSITION
   'output'                 -> BAR_OUTPUT
   'tray_output'            -> BAR_TRAY_OUTPUT
   'font'                   -> BAR_FONT
+  'separator_symbol'       -> BAR_SEPARATOR_SYMBOL
   'binding_mode_indicator' -> BAR_BINDING_MODE_INDICATOR
   'workspace_buttons'      -> BAR_WORKSPACE_BUTTONS
   'strip_workspace_numbers' -> BAR_STRIP_WORKSPACE_NUMBERS
@@ -409,6 +418,14 @@ state BAR_MODIFIER:
   modifier = 'Mod1', 'Mod2', 'Mod3', 'Mod4', 'Mod5', 'Control', 'Ctrl', 'Shift'
       -> call cfg_bar_modifier($modifier); BAR
 
+state BAR_WHEEL_UP_CMD:
+  command = string
+      -> call cfg_bar_wheel_up_cmd($command); BAR
+
+state BAR_WHEEL_DOWN_CMD:
+  command = string
+      -> call cfg_bar_wheel_down_cmd($command); BAR
+
 state BAR_POSITION:
   position = 'top', 'bottom'
       -> call cfg_bar_position($position); BAR
@@ -418,12 +435,16 @@ state BAR_OUTPUT:
       -> call cfg_bar_output($output); BAR
 
 state BAR_TRAY_OUTPUT:
-  output = string
+  output = word
       -> call cfg_bar_tray_output($output); BAR
 
 state BAR_FONT:
   font = string
       -> call cfg_bar_font($font); BAR
+
+state BAR_SEPARATOR_SYMBOL:
+  separator = string
+      -> call cfg_bar_separator_symbol($separator); BAR
 
 state BAR_BINDING_MODE_INDICATOR:
   value = word

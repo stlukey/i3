@@ -105,7 +105,7 @@ struct Config {
 
     /** By default, focus follows mouse. If the user explicitly wants to
      * turn this off (and instead rely only on the keyboard for changing
-     * focus), we allow him to do this with this relatively special option.
+     * focus), we allow them to do this with this relatively special option.
      * It is not planned to add any different focus models. */
     bool disable_focus_follows_mouse;
 
@@ -244,10 +244,13 @@ struct Barconfig {
     char *socket_path;
 
     /** Bar display mode (hide unless modifier is pressed or show in dock mode or always hide in invisible mode) */
-    enum { M_DOCK = 0, M_HIDE = 1, M_INVISIBLE = 2 } mode;
+    enum { M_DOCK = 0,
+           M_HIDE = 1,
+           M_INVISIBLE = 2 } mode;
 
     /* The current hidden_state of the bar, which indicates whether it is hidden or shown */
-    enum { S_HIDE = 0, S_SHOW = 1 } hidden_state;
+    enum { S_HIDE = 0,
+           S_SHOW = 1 } hidden_state;
 
     /** Bar modifier (to show bar when in hide mode). */
     enum {
@@ -261,8 +264,17 @@ struct Barconfig {
         M_MOD5 = 7
     } modifier;
 
+    /** Command that should be run when mouse wheel up button is pressed over
+     * i3bar to override the default behavior. */
+    char *wheel_up_cmd;
+
+    /** Command that should be run when mouse wheel down button is pressed over
+     * i3bar to override the default behavior. */
+    char *wheel_down_cmd;
+
     /** Bar position (bottom by default). */
-    enum { P_BOTTOM = 0, P_TOP = 1 } position;
+    enum { P_BOTTOM = 0,
+           P_TOP = 1 } position;
 
     /** Command that should be run to execute i3bar, give a full path if i3bar is not
      * in your $PATH.
@@ -275,6 +287,9 @@ struct Barconfig {
 
     /** Font specification for all text rendered on the bar. */
     char *font;
+
+    /** A custom separator to use instead of a vertical line. */
+    char *separator_symbol;
 
     /** Hide workspace buttons? Configuration option is 'workspace_buttons no'
      * but we invert the bool to get the correct default when initializing with
@@ -316,6 +331,20 @@ struct Barconfig {
 
     TAILQ_ENTRY(Barconfig) configs;
 };
+
+/**
+ * Finds the configuration file to use (either the one specified by
+ * override_configpath), the user’s one or the system default) and calls
+ * parse_file().
+ *
+ * If you specify override_configpath, only this path is used to look for a
+ * configuration file.
+ *
+ * If use_nagbar is false, don't try to start i3-nagbar but log the errors to
+ * stdout/stderr instead.
+ *
+ */
+bool parse_configuration(const char *override_configpath, bool use_nagbar);
 
 /**
  * Reads the configuration from ~/.i3/config or /etc/i3/config if not found.

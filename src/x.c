@@ -15,9 +15,9 @@
 /* Stores the X11 window ID of the currently focused window */
 xcb_window_t focused_id = XCB_NONE;
 
-/* Because 'focused_id' might be reset to force input focus (after click to
- * raise), we separately keep track of the X11 window ID to be able to always
- * tell whether the focused window actually changed. */
+/* Because 'focused_id' might be reset to force input focus, we separately keep
+ * track of the X11 window ID to be able to always tell whether the focused
+ * window actually changed. */
 static xcb_window_t last_focused = XCB_NONE;
 
 /* Stores coordinates to warp mouse pointer to if set */
@@ -76,9 +76,9 @@ TAILQ_HEAD(initial_mapping_head, con_state) initial_mapping_head =
  */
 static con_state *state_for_frame(xcb_window_t window) {
     con_state *state;
-    CIRCLEQ_FOREACH (state, &state_head, state)
-        if (state->id == window)
-            return state;
+    CIRCLEQ_FOREACH(state, &state_head, state)
+    if (state->id == window)
+        return state;
 
     /* TODO: better error handling? */
     ELOG("No state found\n");
@@ -352,8 +352,8 @@ void x_draw_decoration(Con *con) {
 
     Rect *r = &(con->rect);
     Rect *w = &(con->window_rect);
-    p->con_rect = (struct width_height) {r->width, r->height};
-    p->con_window_rect = (struct width_height) {w->width, w->height};
+    p->con_rect = (struct width_height){r->width, r->height};
+    p->con_window_rect = (struct width_height){w->width, w->height};
     p->con_deco_rect = con->deco_rect;
     p->background = config.client.background;
     p->con_is_leaf = con_is_leaf(con);
@@ -403,7 +403,7 @@ void x_draw_decoration(Con *con) {
                 );
 #endif
 
-        xcb_change_gc(conn, con->pm_gc, XCB_GC_FOREGROUND, (uint32_t[]) {config.client.background});
+        xcb_change_gc(conn, con->pm_gc, XCB_GC_FOREGROUND, (uint32_t[]){config.client.background});
         xcb_poly_fill_rectangle(conn, con->pixmap, con->pm_gc, sizeof(background) / sizeof(xcb_rectangle_t), background);
     }
 
@@ -424,22 +424,22 @@ void x_draw_decoration(Con *con) {
          * (left, bottom and right part). We don’t just fill the whole
          * rectangle because some childs are not freely resizable and we want
          * their background color to "shine through". */
-        xcb_change_gc(conn, con->pm_gc, XCB_GC_FOREGROUND, (uint32_t[]) {p->color->background});
+        xcb_change_gc(conn, con->pm_gc, XCB_GC_FOREGROUND, (uint32_t[]){p->color->background});
         if (!(borders_to_hide & ADJ_LEFT_SCREEN_EDGE)) {
             xcb_rectangle_t leftline = {0, 0, br.x, r->height};
             xcb_poly_fill_rectangle(conn, con->pixmap, con->pm_gc, 1, &leftline);
         }
         if (!(borders_to_hide & ADJ_RIGHT_SCREEN_EDGE)) {
-            xcb_rectangle_t rightline = {r->width + br.width + br.x, 0, r->width, r->height};
+            xcb_rectangle_t rightline = {r->width + (br.width + br.x), 0, -(br.width + br.x), r->height};
             xcb_poly_fill_rectangle(conn, con->pixmap, con->pm_gc, 1, &rightline);
         }
         if (!(borders_to_hide & ADJ_LOWER_SCREEN_EDGE)) {
-            xcb_rectangle_t bottomline = {0, r->height + br.height + br.y, r->width, r->height};
+            xcb_rectangle_t bottomline = {br.x, r->height + (br.height + br.y), r->width + br.width, -(br.height + br.y)};
             xcb_poly_fill_rectangle(conn, con->pixmap, con->pm_gc, 1, &bottomline);
         }
         /* 1pixel border needs an additional line at the top */
         if (p->border_style == BS_PIXEL && !(borders_to_hide & ADJ_UPPER_SCREEN_EDGE)) {
-            xcb_rectangle_t topline = {br.x, 0, con->rect.width + br.width + br.x, br.y};
+            xcb_rectangle_t topline = {br.x, 0, r->width + br.width, br.y};
             xcb_poly_fill_rectangle(conn, con->pixmap, con->pm_gc, 1, &topline);
         }
 
@@ -450,13 +450,13 @@ void x_draw_decoration(Con *con) {
         if (TAILQ_NEXT(con, nodes) == NULL &&
             TAILQ_PREV(con, nodes_head, nodes) == NULL &&
             con->parent->type != CT_FLOATING_CON) {
-            xcb_change_gc(conn, con->pm_gc, XCB_GC_FOREGROUND, (uint32_t[]) {p->color->indicator});
+            xcb_change_gc(conn, con->pm_gc, XCB_GC_FOREGROUND, (uint32_t[]){p->color->indicator});
             if (p->parent_layout == L_SPLITH)
-                xcb_poly_fill_rectangle(conn, con->pixmap, con->pm_gc, 1, (xcb_rectangle_t[]) {
-                                                                              {r->width + br.width + br.x, br.y, r->width, r->height + br.height}});
+                xcb_poly_fill_rectangle(conn, con->pixmap, con->pm_gc, 1, (xcb_rectangle_t[]){
+                                                                              {r->width + (br.width + br.x), br.y, -(br.width + br.x), r->height + br.height}});
             else if (p->parent_layout == L_SPLITV)
-                xcb_poly_fill_rectangle(conn, con->pixmap, con->pm_gc, 1, (xcb_rectangle_t[]) {
-                                                                              {br.x, r->height + br.height + br.y, r->width - (2 * br.x), r->height}});
+                xcb_poly_fill_rectangle(conn, con->pixmap, con->pm_gc, 1, (xcb_rectangle_t[]){
+                                                                              {br.x, r->height + (br.height + br.y), r->width + br.width, -(br.height + br.y)}});
         }
     }
 
@@ -466,20 +466,20 @@ void x_draw_decoration(Con *con) {
         goto copy_pixmaps;
 
     /* 4: paint the bar */
-    xcb_change_gc(conn, parent->pm_gc, XCB_GC_FOREGROUND, (uint32_t[]) {p->color->background});
+    xcb_change_gc(conn, parent->pm_gc, XCB_GC_FOREGROUND, (uint32_t[]){p->color->background});
     xcb_rectangle_t drect = {con->deco_rect.x, con->deco_rect.y, con->deco_rect.width, con->deco_rect.height};
     xcb_poly_fill_rectangle(conn, parent->pixmap, parent->pm_gc, 1, &drect);
 
     /* 5: draw two unconnected horizontal lines in border color */
-    xcb_change_gc(conn, parent->pm_gc, XCB_GC_FOREGROUND, (uint32_t[]) {p->color->border});
+    xcb_change_gc(conn, parent->pm_gc, XCB_GC_FOREGROUND, (uint32_t[]){p->color->border});
     Rect *dr = &(con->deco_rect);
-    int deco_diff_l = 2;
-    int deco_diff_r = 2;
-    if (parent->layout == L_TABBED) {
-        if (TAILQ_PREV(con, nodes_head, nodes) != NULL)
-            deco_diff_l = 0;
-        if (TAILQ_NEXT(con, nodes) != NULL)
-            deco_diff_r = 0;
+    adjacent_t borders_to_hide = con_adjacent_borders(con) & config.hide_edge_borders;
+    int deco_diff_l = borders_to_hide & ADJ_LEFT_SCREEN_EDGE ? 0 : con->current_border_width;
+    int deco_diff_r = borders_to_hide & ADJ_RIGHT_SCREEN_EDGE ? 0 : con->current_border_width;
+    if (parent->layout == L_TABBED ||
+        (parent->layout == L_STACKED && TAILQ_NEXT(con, nodes) != NULL)) {
+        deco_diff_l = 0;
+        deco_diff_r = 0;
     }
     xcb_segment_t segments[] = {
         {dr->x, dr->y,
@@ -545,12 +545,12 @@ after_title:
     /* Draw a 1px separator line before and after every tab, so that tabs can
      * be easily distinguished. */
     if (parent->layout == L_TABBED) {
-        xcb_change_gc(conn, parent->pm_gc, XCB_GC_FOREGROUND, (uint32_t[]) {p->color->border});
+        xcb_change_gc(conn, parent->pm_gc, XCB_GC_FOREGROUND, (uint32_t[]){p->color->border});
     } else {
-        xcb_change_gc(conn, parent->pm_gc, XCB_GC_FOREGROUND, (uint32_t[]) {p->color->background});
+        xcb_change_gc(conn, parent->pm_gc, XCB_GC_FOREGROUND, (uint32_t[]){p->color->background});
     }
     xcb_poly_line(conn, XCB_COORD_MODE_ORIGIN, parent->pixmap, parent->pm_gc, 6,
-                  (xcb_point_t[]) {
+                  (xcb_point_t[]){
                       {dr->x + dr->width, dr->y},
                       {dr->x + dr->width, dr->y + dr->height},
                       {dr->x + dr->width - 1, dr->y},
@@ -559,7 +559,7 @@ after_title:
                       {dr->x, dr->y},
                   });
 
-    xcb_change_gc(conn, parent->pm_gc, XCB_GC_FOREGROUND, (uint32_t[]) {p->color->border});
+    xcb_change_gc(conn, parent->pm_gc, XCB_GC_FOREGROUND, (uint32_t[]){p->color->border});
     xcb_poly_segment(conn, parent->pixmap, parent->pm_gc, 2, segments);
 
 copy_pixmaps:
@@ -579,11 +579,11 @@ void x_deco_recurse(Con *con) {
     con_state *state = state_for_frame(con->frame);
 
     if (!leaf) {
-        TAILQ_FOREACH (current, &(con->nodes_head), nodes)
-            x_deco_recurse(current);
+        TAILQ_FOREACH(current, &(con->nodes_head), nodes)
+        x_deco_recurse(current);
 
-        TAILQ_FOREACH (current, &(con->floating_head), floating_windows)
-            x_deco_recurse(current);
+        TAILQ_FOREACH(current, &(con->floating_head), floating_windows)
+        x_deco_recurse(current);
 
         if (state->mapped)
             xcb_copy_area(conn, con->pixmap, con->frame, con->pm_gc, 0, 0, 0, 0, con->rect.width, con->rect.height);
@@ -620,7 +620,7 @@ void x_push_node(Con *con) {
         /* Calculate the height of all window decorations which will be drawn on to
          * this frame. */
         uint32_t max_y = 0, max_height = 0;
-        TAILQ_FOREACH (current, &(con->nodes_head), nodes) {
+        TAILQ_FOREACH(current, &(con->nodes_head), nodes) {
             Rect *dr = &(current->deco_rect);
             if (dr->y >= max_y && dr->height >= max_height) {
                 max_y = dr->y;
@@ -800,8 +800,8 @@ void x_push_node(Con *con) {
     /* Handle all children and floating windows of this node. We recurse
      * in focus order to display the focused client in a stack first when
      * switching workspaces (reduces flickering). */
-    TAILQ_FOREACH (current, &(con->focus_head), focused)
-        x_push_node(current);
+    TAILQ_FOREACH(current, &(con->focus_head), focused)
+    x_push_node(current);
 }
 
 /*
@@ -845,11 +845,11 @@ static void x_push_node_unmaps(Con *con) {
     }
 
     /* handle all children and floating windows of this node */
-    TAILQ_FOREACH (current, &(con->nodes_head), nodes)
-        x_push_node_unmaps(current);
+    TAILQ_FOREACH(current, &(con->nodes_head), nodes)
+    x_push_node_unmaps(current);
 
-    TAILQ_FOREACH (current, &(con->floating_head), floating_windows)
-        x_push_node_unmaps(current);
+    TAILQ_FOREACH(current, &(con->floating_head), floating_windows)
+    x_push_node_unmaps(current);
 }
 
 /*
@@ -862,7 +862,7 @@ static bool is_con_attached(Con *con) {
         return false;
 
     Con *current;
-    TAILQ_FOREACH (current, &(con->parent->nodes_head), nodes) {
+    TAILQ_FOREACH(current, &(con->parent->nodes_head), nodes) {
         if (current == con)
             return true;
     }
@@ -893,7 +893,7 @@ void x_push_changes(Con *con) {
     DLOG("-- PUSHING WINDOW STACK --\n");
     //DLOG("Disabling EnterNotify\n");
     uint32_t values[1] = {XCB_NONE};
-    CIRCLEQ_FOREACH_REVERSE (state, &state_head, state) {
+    CIRCLEQ_FOREACH_REVERSE(state, &state_head, state) {
         if (state->mapped)
             xcb_change_window_attributes(conn, state->id, XCB_CW_EVENT_MASK, values);
     }
@@ -904,9 +904,9 @@ void x_push_changes(Con *con) {
     /* count first, necessary to (re)allocate memory for the bottom-to-top
      * stack afterwards */
     int cnt = 0;
-    CIRCLEQ_FOREACH_REVERSE (state, &state_head, state)
-        if (con_has_managed_window(state->con))
-            cnt++;
+    CIRCLEQ_FOREACH_REVERSE(state, &state_head, state)
+    if (con_has_managed_window(state->con))
+        cnt++;
 
     /* The bottom-to-top window stack of all windows which are managed by i3.
      * Used for x_get_window_stack(). */
@@ -921,7 +921,7 @@ void x_push_changes(Con *con) {
     xcb_window_t *walk = client_list_windows;
 
     /* X11 correctly represents the stack if we push it from bottom to top */
-    CIRCLEQ_FOREACH_REVERSE (state, &state_head, state) {
+    CIRCLEQ_FOREACH_REVERSE(state, &state_head, state) {
         if (con_has_managed_window(state->con))
             memcpy(walk++, &(state->con->window->id), sizeof(xcb_window_t));
 
@@ -952,7 +952,7 @@ void x_push_changes(Con *con) {
         walk = client_list_windows;
 
         /* reorder by initial mapping */
-        TAILQ_FOREACH (state, &initial_mapping_head, initial_mapping_order) {
+        TAILQ_FOREACH(state, &initial_mapping_head, initial_mapping_order) {
             if (con_has_managed_window(state->con))
                 *walk++ = state->con->window->id;
         }
@@ -975,9 +975,9 @@ void x_push_changes(Con *con) {
             Output *target = get_output_containing(mid_x, mid_y);
             if (current != target) {
                 /* Ignore MotionNotify events generated by warping */
-                xcb_change_window_attributes(conn, root, XCB_CW_EVENT_MASK, (uint32_t[]) {XCB_EVENT_MASK_SUBSTRUCTURE_REDIRECT});
+                xcb_change_window_attributes(conn, root, XCB_CW_EVENT_MASK, (uint32_t[]){XCB_EVENT_MASK_SUBSTRUCTURE_REDIRECT});
                 xcb_warp_pointer(conn, XCB_NONE, root, 0, 0, 0, 0, mid_x, mid_y);
-                xcb_change_window_attributes(conn, root, XCB_CW_EVENT_MASK, (uint32_t[]) {ROOT_EVENT_MASK});
+                xcb_change_window_attributes(conn, root, XCB_CW_EVENT_MASK, (uint32_t[]){ROOT_EVENT_MASK});
             }
         }
         warp_to = NULL;
@@ -985,7 +985,7 @@ void x_push_changes(Con *con) {
 
     //DLOG("Re-enabling EnterNotify\n");
     values[0] = FRAME_EVENT_MASK;
-    CIRCLEQ_FOREACH_REVERSE (state, &state_head, state) {
+    CIRCLEQ_FOREACH_REVERSE(state, &state_head, state) {
         if (state->mapped)
             xcb_change_window_attributes(conn, state->id, XCB_CW_EVENT_MASK, values);
     }
@@ -1023,7 +1023,7 @@ void x_push_changes(Con *con) {
                     values[0] = CHILD_EVENT_MASK & ~(XCB_EVENT_MASK_FOCUS_CHANGE);
                     xcb_change_window_attributes(conn, focused->window->id, XCB_CW_EVENT_MASK, values);
                 }
-                xcb_set_input_focus(conn, XCB_INPUT_FOCUS_POINTER_ROOT, to_focus, last_timestamp);
+                xcb_set_input_focus(conn, XCB_INPUT_FOCUS_POINTER_ROOT, to_focus, XCB_CURRENT_TIME);
                 if (focused->window != NULL) {
                     values[0] = CHILD_EVENT_MASK;
                     xcb_change_window_attributes(conn, focused->window->id, XCB_CW_EVENT_MASK, values);
@@ -1041,7 +1041,7 @@ void x_push_changes(Con *con) {
 
     if (focused_id == XCB_NONE) {
         DLOG("Still no window focused, better set focus to the root window\n");
-        xcb_set_input_focus(conn, XCB_INPUT_FOCUS_POINTER_ROOT, root, last_timestamp);
+        xcb_set_input_focus(conn, XCB_INPUT_FOCUS_POINTER_ROOT, root, XCB_CURRENT_TIME);
         ewmh_update_active_window(XCB_WINDOW_NONE);
         focused_id = root;
     }
@@ -1057,7 +1057,7 @@ void x_push_changes(Con *con) {
      * unmapped, the second one appears under the cursor and therefore gets an
      * EnterNotify event. */
     values[0] = FRAME_EVENT_MASK & ~XCB_EVENT_MASK_ENTER_WINDOW;
-    CIRCLEQ_FOREACH_REVERSE (state, &state_head, state) {
+    CIRCLEQ_FOREACH_REVERSE(state, &state_head, state) {
         if (!state->unmap_now)
             continue;
         xcb_change_window_attributes(conn, state->id, XCB_CW_EVENT_MASK, values);
@@ -1067,7 +1067,7 @@ void x_push_changes(Con *con) {
     x_push_node_unmaps(con);
 
     /* save the current stack as old stack */
-    CIRCLEQ_FOREACH (state, &state_head, state) {
+    CIRCLEQ_FOREACH(state, &state_head, state) {
         CIRCLEQ_REMOVE(&old_state_head, state, old_state);
         CIRCLEQ_INSERT_TAIL(&old_state_head, state, old_state);
     }
@@ -1155,7 +1155,7 @@ void x_mask_event_mask(uint32_t mask) {
     uint32_t values[] = {FRAME_EVENT_MASK & mask};
 
     con_state *state;
-    CIRCLEQ_FOREACH_REVERSE (state, &state_head, state) {
+    CIRCLEQ_FOREACH_REVERSE(state, &state_head, state) {
         if (state->mapped)
             xcb_change_window_attributes(conn, state->id, XCB_CW_EVENT_MASK, values);
     }

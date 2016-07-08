@@ -21,8 +21,8 @@
  * (immediately), the application is reparented to init (process-id 1), which
  * correctly handles childs, so we don’t have to do it :-).
  *
- * The shell is determined by looking for the SHELL environment variable. If
- * it does not exist, /bin/sh is used.
+ * The shell used to start applications is the system's bourne shell (i.e.,
+ * /bin/sh).
  *
  * The no_startup_id flag determines whether a startup notification context
  * (and ID) should be created, which is the default and encouraged behavior.
@@ -45,11 +45,17 @@ void startup_sequence_delete(struct Startup_Sequence *sequence);
 void startup_monitor_event(SnMonitorEvent *event, void *userdata);
 
 /**
+ * Renames workspaces that are mentioned in the startup sequences.
+ *
+ */
+void startup_sequence_rename_workspace(char *old_name, char *new_name);
+
+/**
  * Gets the stored startup sequence for the _NET_STARTUP_ID of a given window.
  *
  */
 struct Startup_Sequence *startup_sequence_get(i3Window *cwindow,
-    xcb_get_property_reply_t *startup_id_reply, bool ignore_mapped_leader);
+                                              xcb_get_property_reply_t *startup_id_reply, bool ignore_mapped_leader);
 
 /**
  * Checks if the given window belongs to a startup notification by checking if

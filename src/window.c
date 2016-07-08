@@ -26,13 +26,16 @@ void window_update_class(i3Window *win, xcb_get_property_reply_t *prop, bool bef
     /* We cannot use asprintf here since this property contains two
      * null-terminated strings (for compatibility reasons). Instead, we
      * use strdup() on both strings */
-    char *new_class = xcb_get_property_value(prop);
+    const size_t prop_length = xcb_get_property_value_length(prop);
+    char *new_class = smalloc(prop_length + 1);
+    memcpy(new_class, xcb_get_property_value(prop), prop_length);
+    new_class[prop_length] = '\0';
 
     FREE(win->class_instance);
     FREE(win->class_class);
 
     win->class_instance = sstrdup(new_class);
-    if ((strlen(new_class) + 1) < (size_t)xcb_get_property_value_length(prop))
+    if ((strlen(new_class) + 1) < prop_length)
         win->class_class = sstrdup(new_class + strlen(new_class) + 1);
     else
         win->class_class = NULL;
@@ -40,12 +43,14 @@ void window_update_class(i3Window *win, xcb_get_property_reply_t *prop, bool bef
         win->class_instance, win->class_class);
 
     if (before_mgmt) {
+        free(new_class);
         free(prop);
         return;
     }
 
     run_assignments(win);
 
+    free(new_class);
     free(prop);
 }
 
@@ -125,7 +130,8 @@ void window_update_name_legacy(i3Window *win, xcb_get_property_reply_t *prop, bo
  */
 void window_update_leader(i3Window *win, xcb_get_property_reply_t *prop) {
     if (prop == NULL || xcb_get_property_value_length(prop) == 0) {
-        DLOG("CLIENT_LEADER not set.\n");
+        DLOG("CLIENT_LEADER not set on window 0x%08x.\n", win->id);
+        win->leader = XCB_NONE;
         FREE(prop);
         return;
     }
@@ -149,7 +155,8 @@ void window_update_leader(i3Window *win, xcb_get_property_reply_t *prop) {
  */
 void window_update_transient_for(i3Window *win, xcb_get_property_reply_t *prop) {
     if (prop == NULL || xcb_get_property_value_length(prop) == 0) {
-        DLOG("TRANSIENT_FOR not set.\n");
+        DLOG("TRANSIENT_FOR not set on window 0x%08x.\n", win->id);
+        win->transient_for = XCB_NONE;
         FREE(prop);
         return;
     }
@@ -160,7 +167,7 @@ void window_update_transient_for(i3Window *win, xcb_get_property_reply_t *prop) 
         return;
     }
 
-    DLOG("Transient for changed to %08x\n", transient_for);
+    DLOG("Transient for changed to 0x%08x (window 0x%08x)\n", transient_for, win->id);
 
     win->transient_for = transient_for;
 
@@ -187,7 +194,7 @@ void window_update_strut_partial(i3Window *win, xcb_get_property_reply_t *prop) 
     DLOG("Reserved pixels changed to: left = %d, right = %d, top = %d, bottom = %d\n",
          strut[0], strut[1], strut[2], strut[3]);
 
-    win->reserved = (struct reservedpx) {strut[0], strut[1], strut[2], strut[3]};
+    win->reserved = (struct reservedpx){strut[0], strut[1], strut[2], strut[3]};
 
     free(prop);
 }

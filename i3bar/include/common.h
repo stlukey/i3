@@ -15,9 +15,7 @@
 
 typedef struct rect_t rect;
 
-struct ev_loop* main_loop;
-char            *statusline;
-char            *statusline_buffer;
+struct ev_loop *main_loop;
 
 struct rect_t {
     int x;
@@ -27,6 +25,7 @@ struct rect_t {
 };
 
 typedef enum {
+    /* First value to make it the default. */
     ALIGN_LEFT,
     ALIGN_CENTER,
     ALIGN_RIGHT
@@ -36,13 +35,21 @@ typedef enum {
  * up one status line. */
 struct status_block {
     i3String *full_text;
+    i3String *short_text;
 
     char *color;
+
+    /* min_width can be specified either as a numeric value (in pixels) or as a
+     * string. For strings, we set min_width to the measured text width of
+     * min_width_str. */
     uint32_t min_width;
+    char *min_width_str;
+
     blockalign_t align;
 
     bool urgent;
     bool no_separator;
+    bool is_markup;
 
     /* The amount of pixels necessary to render a separater after the block. */
     uint32_t sep_block_width;

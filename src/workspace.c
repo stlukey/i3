@@ -11,6 +11,7 @@
  *
  */
 #include "all.h"
+#include "yajl_utils.h"
 
 /* Stores a copy of the name of the last used workspace for the workspace
  * back-and-forth switching. */
@@ -44,8 +45,8 @@ static void _workspace_apply_default_orientation(Con *ws) {
 Con *workspace_get(const char *num, bool *created) {
     Con *output, *workspace = NULL;
 
-    TAILQ_FOREACH (output, &(croot->nodes_head), nodes)
-        GREP_FIRST(workspace, output_get_content(output), !strcasecmp(child->name, num));
+    TAILQ_FOREACH(output, &(croot->nodes_head), nodes)
+    GREP_FIRST(workspace, output_get_content(output), !strcasecmp(child->name, num));
 
     if (workspace == NULL) {
         LOG("Creating new workspace \"%s\"\n", num);
@@ -59,7 +60,7 @@ Con *workspace_get(const char *num, bool *created) {
          * -1. */
         long parsed_num = ws_name_to_number(num);
 
-        TAILQ_FOREACH (assignment, &ws_assignments, ws_assignments) {
+        TAILQ_FOREACH(assignment, &ws_assignments, ws_assignments) {
             if (strcmp(assignment->name, num) == 0) {
                 DLOG("Found workspace name assignment to output \"%s\"\n", assignment->output);
                 GREP_FIRST(output, croot, !strcmp(child->name, assignment->output));
@@ -91,7 +92,10 @@ Con *workspace_get(const char *num, bool *created) {
 
         con_attach(workspace, content, false);
 
-        ipc_send_event("workspace", I3_IPC_EVENT_WORKSPACE, "{\"change\":\"init\"}");
+        ipc_send_workspace_event("init", workspace, NULL);
+        ewmh_update_number_of_desktops();
+        ewmh_update_desktop_names();
+        ewmh_update_desktop_viewport();
         if (created != NULL)
             *created = true;
     } else if (created != NULL) {
@@ -117,13 +121,13 @@ Con *create_workspace_on_output(Output *output, Con *content) {
 
     /* try the configured workspace bindings first to find a free name */
     Binding *bind;
-    TAILQ_FOREACH (bind, bindings, bindings) {
+    TAILQ_FOREACH(bind, bindings, bindings) {
         DLOG("binding with command %s\n", bind->command);
         if (strlen(bind->command) < strlen("workspace ") ||
             strncasecmp(bind->command, "workspace", strlen("workspace")) != 0)
             continue;
         DLOG("relevant command = %s\n", bind->command);
-        char *target = bind->command + strlen("workspace ");
+        const char *target = bind->command + strlen("workspace ");
         while ((*target == ' ' || *target == '\t') && target != '\0')
             target++;
         /* We check if this is the workspace
@@ -139,16 +143,16 @@ Con *create_workspace_on_output(Output *output, Con *content) {
             strncasecmp(target, "back_and_forth", strlen("back_and_forth")) == 0 ||
             strncasecmp(target, "current", strlen("current")) == 0)
             continue;
-        if (*target == '"')
-            target++;
-        if (strncasecmp(target, "__", strlen("__")) == 0) {
+        char *target_name = parse_string(&target, false);
+        if (target_name == NULL)
+            continue;
+        if (strncasecmp(target_name, "__", strlen("__")) == 0) {
             LOG("Cannot create workspace \"%s\". Names starting with __ are i3-internal.\n", target);
+            free(target_name);
             continue;
         }
         FREE(ws->name);
-        ws->name = strdup(target);
-        if (ws->name[strlen(ws->name) - 1] == '"')
-            ws->name[strlen(ws->name) - 1] = '\0';
+        ws->name = target_name;
         DLOG("trying name *%s*\n", ws->name);
 
         /* Ensure that this workspace is not assigned to a different output —
@@ -156,7 +160,7 @@ Con *create_workspace_on_output(Output *output, Con *content) {
          * find a new workspace, etc… */
         bool assigned = false;
         struct Workspace_Assignment *assignment;
-        TAILQ_FOREACH (assignment, &ws_assignments, ws_assignments) {
+        TAILQ_FOREACH(assignment, &ws_assignments, ws_assignments) {
             if (strcmp(assignment->name, ws->name) != 0 ||
                 strcmp(assignment->output, output->name) == 0)
                 continue;
@@ -169,22 +173,14 @@ Con *create_workspace_on_output(Output *output, Con *content) {
             continue;
 
         current = NULL;
-        TAILQ_FOREACH (out, &(croot->nodes_head), nodes)
-            GREP_FIRST(current, output_get_content(out), !strcasecmp(child->name, ws->name));
+        TAILQ_FOREACH(out, &(croot->nodes_head), nodes)
+        GREP_FIRST(current, output_get_content(out), !strcasecmp(child->name, ws->name));
 
         exists = (current != NULL);
         if (!exists) {
             /* Set ->num to the number of the workspace, if the name actually
              * is a number or starts with a number */
-            char *endptr = NULL;
-            long parsed_num = strtol(ws->name, &endptr, 10);
-            if (parsed_num == LONG_MIN ||
-                parsed_num == LONG_MAX ||
-                parsed_num < 0 ||
-                endptr == ws->name)
-                ws->num = -1;
-            else
-                ws->num = parsed_num;
+            ws->num = ws_name_to_number(ws->name);
             LOG("Used number %d for workspace with name %s\n", ws->num, ws->name);
 
             break;
@@ -201,8 +197,8 @@ Con *create_workspace_on_output(Output *output, Con *content) {
             ws->num = c;
 
             current = NULL;
-            TAILQ_FOREACH (out, &(croot->nodes_head), nodes)
-                GREP_FIRST(current, output_get_content(out), child->num == ws->num);
+            TAILQ_FOREACH(out, &(croot->nodes_head), nodes)
+            GREP_FIRST(current, output_get_content(out), child->num == ws->num);
             exists = (current != NULL);
 
             DLOG("result for ws %d: exists = %d\n", c, exists);
@@ -245,7 +241,7 @@ bool workspace_is_visible(Con *ws) {
 Con *_get_sticky(Con *con, const char *sticky_group, Con *exclude) {
     Con *current;
 
-    TAILQ_FOREACH (current, &(con->nodes_head), nodes) {
+    TAILQ_FOREACH(current, &(con->nodes_head), nodes) {
         if (current != exclude &&
             current->sticky_group != NULL &&
             current->window != NULL &&
@@ -257,7 +253,7 @@ Con *_get_sticky(Con *con, const char *sticky_group, Con *exclude) {
             return recurse;
     }
 
-    TAILQ_FOREACH (current, &(con->floating_head), floating_windows) {
+    TAILQ_FOREACH(current, &(con->floating_head), floating_windows) {
         if (current != exclude &&
             current->sticky_group != NULL &&
             current->window != NULL &&
@@ -284,7 +280,7 @@ static void workspace_reassign_sticky(Con *con) {
     /* 1: go through all containers */
 
     /* handle all children and floating windows of this node */
-    TAILQ_FOREACH (current, &(con->nodes_head), nodes) {
+    TAILQ_FOREACH(current, &(con->nodes_head), nodes) {
         if (current->sticky_group == NULL) {
             workspace_reassign_sticky(current);
             continue;
@@ -312,8 +308,8 @@ static void workspace_reassign_sticky(Con *con) {
         LOG("re-assigned window from src %p to dest %p\n", src, current);
     }
 
-    TAILQ_FOREACH (current, &(con->floating_head), floating_windows)
-        workspace_reassign_sticky(current);
+    TAILQ_FOREACH(current, &(con->floating_head), floating_windows)
+    workspace_reassign_sticky(current);
 }
 
 /*
@@ -325,11 +321,14 @@ static void workspace_reassign_sticky(Con *con) {
 static void workspace_defer_update_urgent_hint_cb(EV_P_ ev_timer *w, int revents) {
     Con *con = w->data;
 
-    DLOG("Resetting urgency flag of con %p by timer\n", con);
-    con->urgent = false;
-    con_update_parents_urgency(con);
-    workspace_update_urgent_flag(con_get_workspace(con));
-    tree_render();
+    if (con->urgent) {
+        DLOG("Resetting urgency flag of con %p by timer\n", con);
+        con->urgent = false;
+        con_update_parents_urgency(con);
+        workspace_update_urgent_flag(con_get_workspace(con));
+        ipc_send_window_event("urgent", con);
+        tree_render();
+    }
 
     ev_timer_stop(main_loop, con->urgency_timer);
     FREE(con->urgency_timer);
@@ -344,7 +343,7 @@ static void _workspace_show(Con *workspace) {
 
     /* disable fullscreen for the other workspaces and get the workspace we are
      * currently on. */
-    TAILQ_FOREACH (current, &(workspace->parent->nodes_head), nodes) {
+    TAILQ_FOREACH(current, &(workspace->parent->nodes_head), nodes) {
         if (current->fullscreen_mode == CF_OUTPUT)
             old = current;
         current->fullscreen_mode = CF_NONE;
@@ -385,6 +384,7 @@ static void _workspace_show(Con *workspace) {
      * focus and thereby immediately destroy it */
     if (next->urgent && (int)(config.workspace_urgency_timer * 1000) > 0) {
         /* focus for now… */
+        next->urgent = false;
         con_focus(next);
 
         /* … but immediately reset urgency flags; they will be set to false by
@@ -410,7 +410,7 @@ static void _workspace_show(Con *workspace) {
     } else
         con_focus(next);
 
-    ipc_send_workspace_focus_event(workspace, current);
+    ipc_send_workspace_event("focus", workspace, current);
 
     DLOG("old = %p / %s\n", old, (old ? old->name : "(null)"));
     /* Close old workspace if necessary. This must be done *after* doing
@@ -422,8 +422,19 @@ static void _workspace_show(Con *workspace) {
         /* check if this workspace is currently visible */
         if (!workspace_is_visible(old)) {
             LOG("Closing old workspace (%p / %s), it is empty\n", old, old->name);
+            yajl_gen gen = ipc_marshal_workspace_event("empty", old, NULL);
             tree_close(old, DONT_KILL_WINDOW, false, false);
-            ipc_send_event("workspace", I3_IPC_EVENT_WORKSPACE, "{\"change\":\"empty\"}");
+
+            const unsigned char *payload;
+            ylength length;
+            y(get_buf, &payload, &length);
+            ipc_send_event("workspace", I3_IPC_EVENT_WORKSPACE, (const char *)payload);
+
+            y(free);
+
+            ewmh_update_number_of_desktops();
+            ewmh_update_desktop_names();
+            ewmh_update_desktop_viewport();
         }
     }
 
@@ -472,11 +483,11 @@ Con *workspace_next(void) {
         next = TAILQ_NEXT(current, nodes);
     } else {
         /* If currently a numbered workspace, find next numbered workspace. */
-        TAILQ_FOREACH (output, &(croot->nodes_head), nodes) {
+        TAILQ_FOREACH(output, &(croot->nodes_head), nodes) {
             /* Skip outputs starting with __, they are internal. */
             if (con_is_internal(output))
                 continue;
-            NODES_FOREACH (output_get_content(output)) {
+            NODES_FOREACH(output_get_content(output)) {
                 if (child->type != CT_WORKSPACE)
                     continue;
                 if (child->num == -1)
@@ -493,11 +504,11 @@ Con *workspace_next(void) {
     /* Find next named workspace. */
     if (!next) {
         bool found_current = false;
-        TAILQ_FOREACH (output, &(croot->nodes_head), nodes) {
+        TAILQ_FOREACH(output, &(croot->nodes_head), nodes) {
             /* Skip outputs starting with __, they are internal. */
             if (con_is_internal(output))
                 continue;
-            NODES_FOREACH (output_get_content(output)) {
+            NODES_FOREACH(output_get_content(output)) {
                 if (child->type != CT_WORKSPACE)
                     continue;
                 if (child == current) {
@@ -512,11 +523,11 @@ Con *workspace_next(void) {
 
     /* Find first workspace. */
     if (!next) {
-        TAILQ_FOREACH (output, &(croot->nodes_head), nodes) {
+        TAILQ_FOREACH(output, &(croot->nodes_head), nodes) {
             /* Skip outputs starting with __, they are internal. */
             if (con_is_internal(output))
                 continue;
-            NODES_FOREACH (output_get_content(output)) {
+            NODES_FOREACH(output_get_content(output)) {
                 if (child->type != CT_WORKSPACE)
                     continue;
                 if (!next || (child->num != -1 && child->num < next->num))
@@ -544,11 +555,11 @@ Con *workspace_prev(void) {
             prev = NULL;
     } else {
         /* If numbered workspace, find previous numbered workspace. */
-        TAILQ_FOREACH_REVERSE (output, &(croot->nodes_head), nodes_head, nodes) {
+        TAILQ_FOREACH_REVERSE(output, &(croot->nodes_head), nodes_head, nodes) {
             /* Skip outputs starting with __, they are internal. */
             if (con_is_internal(output))
                 continue;
-            NODES_FOREACH_REVERSE (output_get_content(output)) {
+            NODES_FOREACH_REVERSE(output_get_content(output)) {
                 if (child->type != CT_WORKSPACE || child->num == -1)
                     continue;
                 /* Need to check child against current and previous because we
@@ -563,11 +574,11 @@ Con *workspace_prev(void) {
     /* Find previous named workspace. */
     if (!prev) {
         bool found_current = false;
-        TAILQ_FOREACH_REVERSE (output, &(croot->nodes_head), nodes_head, nodes) {
+        TAILQ_FOREACH_REVERSE(output, &(croot->nodes_head), nodes_head, nodes) {
             /* Skip outputs starting with __, they are internal. */
             if (con_is_internal(output))
                 continue;
-            NODES_FOREACH_REVERSE (output_get_content(output)) {
+            NODES_FOREACH_REVERSE(output_get_content(output)) {
                 if (child->type != CT_WORKSPACE)
                     continue;
                 if (child == current) {
@@ -582,11 +593,11 @@ Con *workspace_prev(void) {
 
     /* Find last workspace. */
     if (!prev) {
-        TAILQ_FOREACH_REVERSE (output, &(croot->nodes_head), nodes_head, nodes) {
+        TAILQ_FOREACH_REVERSE(output, &(croot->nodes_head), nodes_head, nodes) {
             /* Skip outputs starting with __, they are internal. */
             if (con_is_internal(output))
                 continue;
-            NODES_FOREACH_REVERSE (output_get_content(output)) {
+            NODES_FOREACH_REVERSE(output_get_content(output)) {
                 if (child->type != CT_WORKSPACE)
                     continue;
                 if (!prev || child->num > prev->num)
@@ -613,7 +624,7 @@ Con *workspace_next_on_output(void) {
         next = TAILQ_NEXT(current, nodes);
     } else {
         /* If currently a numbered workspace, find next numbered workspace. */
-        NODES_FOREACH (output_get_content(output)) {
+        NODES_FOREACH(output_get_content(output)) {
             if (child->type != CT_WORKSPACE)
                 continue;
             if (child->num == -1)
@@ -629,7 +640,7 @@ Con *workspace_next_on_output(void) {
     /* Find next named workspace. */
     if (!next) {
         bool found_current = false;
-        NODES_FOREACH (output_get_content(output)) {
+        NODES_FOREACH(output_get_content(output)) {
             if (child->type != CT_WORKSPACE)
                 continue;
             if (child == current) {
@@ -643,7 +654,7 @@ Con *workspace_next_on_output(void) {
 
     /* Find first workspace. */
     if (!next) {
-        NODES_FOREACH (output_get_content(output)) {
+        NODES_FOREACH(output_get_content(output)) {
             if (child->type != CT_WORKSPACE)
                 continue;
             if (!next || (child->num != -1 && child->num < next->num))
@@ -671,7 +682,7 @@ Con *workspace_prev_on_output(void) {
             prev = NULL;
     } else {
         /* If numbered workspace, find previous numbered workspace. */
-        NODES_FOREACH_REVERSE (output_get_content(output)) {
+        NODES_FOREACH_REVERSE(output_get_content(output)) {
             if (child->type != CT_WORKSPACE || child->num == -1)
                 continue;
             /* Need to check child against current and previous because we
@@ -685,7 +696,7 @@ Con *workspace_prev_on_output(void) {
     /* Find previous named workspace. */
     if (!prev) {
         bool found_current = false;
-        NODES_FOREACH_REVERSE (output_get_content(output)) {
+        NODES_FOREACH_REVERSE(output_get_content(output)) {
             if (child->type != CT_WORKSPACE)
                 continue;
             if (child == current) {
@@ -699,7 +710,7 @@ Con *workspace_prev_on_output(void) {
 
     /* Find last workspace. */
     if (!prev) {
-        NODES_FOREACH_REVERSE (output_get_content(output)) {
+        NODES_FOREACH_REVERSE(output_get_content(output)) {
             if (child->type != CT_WORKSPACE)
                 continue;
             if (!prev || child->num > prev->num)
@@ -742,13 +753,13 @@ Con *workspace_back_and_forth_get(void) {
 
 static bool get_urgency_flag(Con *con) {
     Con *child;
-    TAILQ_FOREACH (child, &(con->nodes_head), nodes)
-        if (child->urgent || get_urgency_flag(child))
-            return true;
+    TAILQ_FOREACH(child, &(con->nodes_head), nodes)
+    if (child->urgent || get_urgency_flag(child))
+        return true;
 
-    TAILQ_FOREACH (child, &(con->floating_head), floating_windows)
-        if (child->urgent || get_urgency_flag(child))
-            return true;
+    TAILQ_FOREACH(child, &(con->floating_head), floating_windows)
+    if (child->urgent || get_urgency_flag(child))
+        return true;
 
     return false;
 }
@@ -764,7 +775,7 @@ void workspace_update_urgent_flag(Con *ws) {
     DLOG("Workspace urgency flag changed from %d to %d\n", old_flag, ws->urgent);
 
     if (old_flag != ws->urgent)
-        ipc_send_event("workspace", I3_IPC_EVENT_WORKSPACE, "{\"change\":\"urgent\"}");
+        ipc_send_workspace_event("urgent", ws, NULL);
 }
 
 /*
@@ -867,4 +878,112 @@ Con *workspace_encapsulate(Con *ws) {
     con_attach(new, ws, true);
 
     return new;
+}
+
+/**
+ * Move the given workspace to the specified output.
+ * This returns true if and only if moving the workspace was successful.
+ */
+bool workspace_move_to_output(Con *ws, char *name) {
+    LOG("Trying to move workspace %p / %s to output \"%s\".\n", ws, ws->name, name);
+
+    Con *current_output_con = con_get_output(ws);
+    if (!current_output_con) {
+        ELOG("Could not get the output container for workspace %p / %s.\n", ws, ws->name);
+        return false;
+    }
+
+    Output *current_output = get_output_by_name(current_output_con->name);
+    if (!current_output) {
+        ELOG("Cannot get current output. This is a bug in i3.\n");
+        return false;
+    }
+    Output *output = get_output_from_string(current_output, name);
+    if (!output) {
+        ELOG("Could not get output from string \"%s\"\n", name);
+        return false;
+    }
+
+    Con *content = output_get_content(output->con);
+    LOG("got output %p with content %p\n", output, content);
+
+    Con *previously_visible_ws = TAILQ_FIRST(&(content->nodes_head));
+    LOG("Previously visible workspace = %p / %s\n", previously_visible_ws, previously_visible_ws->name);
+
+    bool workspace_was_visible = workspace_is_visible(ws);
+    if (con_num_children(ws->parent) == 1) {
+        LOG("Creating a new workspace to replace \"%s\" (last on its output).\n", ws->name);
+
+        /* check if we can find a workspace assigned to this output */
+        bool used_assignment = false;
+        struct Workspace_Assignment *assignment;
+        TAILQ_FOREACH(assignment, &ws_assignments, ws_assignments) {
+            if (assignment->output == NULL || strcmp(assignment->output, current_output->name) != 0)
+                continue;
+
+            /* check if this workspace is already attached to the tree */
+            Con *workspace = NULL, *out;
+            TAILQ_FOREACH(out, &(croot->nodes_head), nodes)
+            GREP_FIRST(workspace, output_get_content(out),
+                       !strcasecmp(child->name, assignment->name));
+            if (workspace != NULL)
+                continue;
+
+            /* so create the workspace referenced to by this assignment */
+            LOG("Creating workspace from assignment %s.\n", assignment->name);
+            workspace_get(assignment->name, NULL);
+            used_assignment = true;
+            break;
+        }
+
+        /* if we couldn't create the workspace using an assignment, create
+         * it on the output */
+        if (!used_assignment)
+            create_workspace_on_output(current_output, ws->parent);
+
+        /* notify the IPC listeners */
+        ipc_send_workspace_event("init", ws, NULL);
+    }
+    DLOG("Detaching\n");
+
+    /* detach from the old output and attach to the new output */
+    Con *old_content = ws->parent;
+    con_detach(ws);
+    if (workspace_was_visible) {
+        /* The workspace which we just detached was visible, so focus
+         * the next one in the focus-stack. */
+        Con *focus_ws = TAILQ_FIRST(&(old_content->focus_head));
+        LOG("workspace was visible, focusing %p / %s now\n", focus_ws, focus_ws->name);
+        workspace_show(focus_ws);
+    }
+    con_attach(ws, content, false);
+
+    /* fix the coordinates of the floating containers */
+    Con *floating_con;
+    TAILQ_FOREACH(floating_con, &(ws->floating_head), floating_windows)
+    floating_fix_coordinates(floating_con, &(old_content->rect), &(content->rect));
+
+    ipc_send_workspace_event("move", ws, NULL);
+    if (workspace_was_visible) {
+        /* Focus the moved workspace on the destination output. */
+        workspace_show(ws);
+    }
+
+    /* NB: We cannot simply work with previously_visible_ws since it might
+     * have been cleaned up by workspace_show() already, depending on the
+     * focus order/number of other workspaces on the output.
+     * Instead, we loop through the available workspaces and only work with
+     * previously_visible_ws if we still find it. */
+    TAILQ_FOREACH(ws, &(content->nodes_head), nodes) {
+        if (ws != previously_visible_ws)
+            continue;
+
+        /* Call the on_remove_child callback of the workspace which previously
+         * was visible on the destination output. Since it is no longer
+         * visible, it might need to get cleaned up. */
+        CALL(previously_visible_ws, on_remove_child);
+        break;
+    }
+
+    return true;
 }
